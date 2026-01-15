@@ -1,1 +1,24 @@
-PySide6
+# Core UI Framework
+PySide6>=6.5.0
+
+# Fluent Design Widgets
+PyQt-Fluent-Widgets>=1.5.0
+
+# Data Processing & Analysis
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Data Visualization
+matplotlib>=3.7.0
+pyqtgraph>=0.13.0
+
+# Serial Communication
+pyserial>=3.5
+
+# Image Processing
+Pillow>=10.0.0
+colorthief>=0.2.1
+
+# Theme Detection
+darkdetect>=0.8.0
