@@ -10,9 +10,10 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 from test import USBDataReader
 from ui_form import Ui_Main
 
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout,
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QPushButton, QTextEdit)
 from PySide6.QtCore import Qt
+import pyqtgraph as pg
 
 class USBDataProcessorApp(QMainWindow):
     def __init__(self, parent=None):
@@ -22,6 +23,11 @@ class USBDataProcessorApp(QMainWindow):
         
         self.usb_reader = None
         self.template = None
+        
+        # Initialize data structures
+        self.voltage_data = []
+        self.current_data = []
+        self.max_points = 400
         
         # Setup UI from designer if available
         if self.template is not None:
@@ -47,6 +53,7 @@ class USBDataProcessorApp(QMainWindow):
         toolbar.addAction("Start", self.start_processing)
         toolbar.addAction("Stop", self.stop_processing)
         toolbar.addAction("Clear", self.clear_data)
+        toolbar.addAction("Export", self.export_chart)
 
         # Create central widget with layout
         central = QWidget()
@@ -56,9 +63,32 @@ class USBDataProcessorApp(QMainWindow):
         self.status_label = QLabel("Status: Disconnected")
         layout.addWidget(self.status_label)
 
+        # Chart widget
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('w')
+        self.plot_widget.setTitle("Real-time Voltage & Current Monitor", color="k", size="14pt")
+        self.plot_widget.setLabel('left', 'Value', color='k')
+        self.plot_widget.setLabel('bottom', 'Time', units='s', color='k')
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.addLegend()
+        
+        # Chart curves (without symbols to avoid segfault)
+        # self.voltage_curve = self.plot_widget.plot(
+        #     pen=pg.mkPen(color=(75, 192, 192), width=2),
+        #     name="Voltage (V)"
+        # )
+        
+        self.current_curve = self.plot_widget.plot(
+            pen=pg.mkPen(color=(255, 99, 132), width=2),
+            name="Current (A)"
+        )
+        
+        layout.addWidget(self.plot_widget)
+
         # Data display
         self.data_display = QTextEdit()
         self.data_display.setReadOnly(True)
+        self.data_display.setMaximumHeight(150)
         layout.addWidget(self.data_display)
 
         central.setLayout(layout)
@@ -95,6 +125,20 @@ class USBDataProcessorApp(QMainWindow):
         message = f"[{data['timestamp']}] Voltage: {data['voltage']:.2f}V, Current: {data['current']:.2f}A\n"
         self.data_display.append(message)
         print(f"[{data['timestamp']}] V: {data['voltage']:.2f}V, I: {data['current']:.2f}A")
+        
+        # Update chart
+        # self.voltage_data.append(data['voltage'])
+        self.current_data.append(data['current'])
+        
+        # Keep only recent data points
+        if len(self.current_data) > self.max_points:
+            # self.voltage_data.pop(0)
+            self.current_data.pop(0)
+        
+        # Update plot with time in seconds (100 packets/second)
+        x = [i / 100 for i in range(len(self.current_data))]
+        # self.voltage_curve.setData(x, self.voltage_data)
+        self.current_curve.setData(x, self.current_data)
 
     def on_connection_status(self, status):
         """Handle connection status updates"""
@@ -112,6 +156,20 @@ class USBDataProcessorApp(QMainWindow):
 
     def clear_data(self):
         self.data_display.clear()
+        self.voltage_data.clear()
+        self.current_data.clear()
+        self.voltage_curve.setData([], [])
+        self.current_curve.setData([], [])
+
+    def export_chart(self):
+        """Export chart as PNG image"""
+        try:
+            exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
+            exporter.export('chart.png')
+            self.statusBar().showMessage("Chart exported to chart.png")
+            print("Chart exported to chart.png")
+        except Exception as e:
+            self.statusBar().showMessage(f"Export failed: {e}")
 
     def open_settings(self):
         # This would open a QDialog

@@ -28,7 +28,7 @@ def main():
                 ser.write(data.encode())
                 
                 print(f"Sent: {data.strip()}")
-                time.sleep(1)  # Send every 1 second
+                time.sleep(0.01)  # Send every 1 second
                 
         except KeyboardInterrupt:
             print("\nStopped by user")

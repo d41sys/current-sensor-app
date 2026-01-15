@@ -81,3 +81,5 @@ CMakeLists.txt.user*
 .uic/
 /build*/
 .qtcreator/
+PyQt-Fluent-Widgets/
+PySide6-FluentUI-QML/
