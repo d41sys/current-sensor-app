@@ -1,24 +1,45 @@
 # Core UI Framework
-PySide6>=6.5.0
+PySide6==6.10.1
+PySide6-Addons==6.10.1
+PySide6-Essentials==6.10.1
+shiboken6==6.10.1
 
 # Fluent Design Widgets
-PyQt-Fluent-Widgets>=1.5.0
+PySide6-Fluent-Widgets==1.10.4
+PySideSix-Frameless-Window==0.7.4
 
 # Data Processing & Analysis
-pandas>=2.0.0
-numpy>=1.24.0
-scipy>=1.10.0
+pandas==2.3.3
+numpy==2.3.5
+scipy==1.16.3
+openpyxl==3.1.5
 
 # Data Visualization
-matplotlib>=3.7.0
-pyqtgraph>=0.13.0
+matplotlib==3.10.8
+pyqtgraph==0.14.0
+contourpy==1.3.3
+cycler==0.12.1
+kiwisolver==1.4.9
+fonttools==4.61.1
+pyparsing==3.3.1
 
 # Serial Communication
-pyserial>=3.5
+pyserial==3.5
 
 # Image Processing
-Pillow>=10.0.0
-colorthief>=0.2.1
+Pillow==12.0.0
+colorthief==0.2.1
 
-# Theme Detection
-darkdetect>=0.8.0
+# Theme Detection & Utilities
+darkdetect==0.8.0
+colorama==0.4.6
+
+# Date/Time Utilities
+python-dateutil==2.9.0.post0
+pytz==2025.2
+tzdata==2025.3
+six==1.17.0
+
+# Packaging
+packaging==25.0
+et-xmlfile==2.0.0
