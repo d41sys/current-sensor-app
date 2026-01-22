@@ -53,33 +53,31 @@ class SerialReaderThread(QThread):
     
     def parse_data(self, line):
         """Parse incoming serial data from Pico
-        Expected format: seq,timestamp,v1,v2,...,v9,i1,i2,...,i9,power
-        Total: 2 + 9 + 9 + 1 = 21 values
+        Expected format: timestamp,i1,i2,...,i9,vbus,cycle_us
+        Total: 12 values (timestamp + 9 currents + voltage + cycle_us)
         """
         try:
             parts = line.strip().split(',')
             
-            # Expected 21 values: seq, timestamp, 9 voltages, 9 currents, power
-            if len(parts) >= 21:
-                seq = int(parts[0])
-                pico_timestamp = int(parts[1])
+            # Expected 12 values: timestamp, 9 currents, voltage, cycle_us
+            if len(parts) >= 11:  # At least timestamp + 9 currents + voltage
+                pico_timestamp = int(parts[0])
                 
-                # Parse 9 voltages (indices 2-10)
-                voltages = [float(parts[i]) for i in range(2, 11)]
+                # Parse 9 currents (indices 1-9) - values in mA, convert to A
+                currents = [float(parts[i]) / 1000.0 for i in range(1, 10)]
                 
-                # Parse 9 currents (indices 11-19)
-                currents = [float(parts[i]) for i in range(11, 20)]
+                # Voltage at index 10 - value in mV, convert to V
+                voltage = float(parts[10]) / 1000.0 if len(parts) > 10 else 0.0
                 
-                # Power is at index 20
-                power = float(parts[20])
+                # Cycle time at index 11 (optional)
+                cycle_us = int(parts[11]) if len(parts) > 11 else 0
                 
                 return {
                     'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                    'seq': seq,
                     'pico_time': pico_timestamp,
-                    'voltages': voltages,
                     'currents': currents,
-                    'power': power,
+                    'voltage': voltage,
+                    'cycle_us': cycle_us,
                     'raw': line
                 }
         except Exception as e:
@@ -89,9 +87,8 @@ class SerialReaderThread(QThread):
         # If parsing fails, just return raw data
         return {
             'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-            'voltages': [0.0] * 9,
             'currents': [0.0] * 9,
-            'power': 0.0,
+            'voltage': 0.0,
             'raw': line
         }
     
@@ -153,34 +150,32 @@ class SocketReaderThread(QThread):
                     pass
     
     def parse_data(self, line):
-        """Parse incoming data from socket
-        Expected format: seq,timestamp,v1,v2,...,v9,i1,i2,...,i9,power
-        Total: 2 + 9 + 9 + 1 = 21 values
+        """Parse incoming data from socket (eth_sender.py)
+        Expected format: timestamp,i1,i2,...,i9,vbus,cycle_us
+        Total: 12 values (timestamp + 9 currents + voltage + cycle_us)
         """
         try:
             parts = line.strip().split(',')
             
-            # Expected 21 values: seq, timestamp, 9 voltages, 9 currents, power
-            if len(parts) >= 21:
-                seq = int(parts[0])
-                pico_timestamp = int(parts[1])
+            # Expected 12 values: timestamp, 9 currents, voltage, cycle_us
+            if len(parts) >= 11:  # At least timestamp + 9 currents + voltage
+                pico_timestamp = int(parts[0])
                 
-                # Parse 9 voltages (indices 2-10)
-                voltages = [float(parts[i]) for i in range(2, 11)]
+                # Parse 9 currents (indices 1-9) - values in mA, convert to A
+                currents = [float(parts[i]) / 1000.0 for i in range(1, 10)]
                 
-                # Parse 9 currents (indices 11-19)
-                currents = [float(parts[i]) for i in range(11, 20)]
+                # Voltage at index 10 - value in mV, convert to V
+                voltage = float(parts[10]) / 1000.0 if len(parts) > 10 else 0.0
                 
-                # Power is at index 20
-                power = float(parts[20])
+                # Cycle time at index 11 (optional)
+                cycle_us = int(parts[11]) if len(parts) > 11 else 0
                 
                 return {
                     'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-                    'seq': seq,
                     'pico_time': pico_timestamp,
-                    'voltages': voltages,
                     'currents': currents,
-                    'power': power,
+                    'voltage': voltage,
+                    'cycle_us': cycle_us,
                     'raw': line
                 }
         except Exception as e:
@@ -188,9 +183,8 @@ class SocketReaderThread(QThread):
         
         return {
             'timestamp': datetime.now().strftime("%H:%M:%S.%f")[:-3],
-            'voltages': [0.0] * 9,
             'currents': [0.0] * 9,
-            'power': 0.0,
+            'voltage': 0.0,
             'raw': line
         }
     
@@ -531,10 +525,11 @@ class USBDataInterface(ScrollArea):
         """Handle received data"""
         # Format log message
         if 'currents' in data and data['currents']:
-            seq = data.get('seq', 0)
-            power = data.get('power', 0)
+            pico_time = data.get('pico_time', 0)
+            voltage = data.get('voltage', 0)
             avg_i = sum(data['currents']) / len(data['currents'])
-            message = f"[{data['timestamp']}] #{seq:05d} | Avg I: {avg_i:.4f}A | P: {power:.3f}W"
+            cycle_us = data.get('cycle_us', 0)
+            message = f"[{data['timestamp']}] t={pico_time} | Avg I: {avg_i:.4f}A | V: {voltage:.3f}V | Δ{cycle_us}μs"
         else:
             message = f"[{data['timestamp']}] {data.get('raw', 'No data')}"
         
@@ -555,12 +550,12 @@ class USBDataInterface(ScrollArea):
                     if len(self.current_data[i]) > self.max_points:
                         self.current_data[i].pop(0)
         
-        if 'voltages' in data:
-            for i in range(self.num_sensors):
-                if i < len(data['voltages']):
-                    self.voltage_data[i].append(data['voltages'][i])
-                    if len(self.voltage_data[i]) > self.max_points:
-                        self.voltage_data[i].pop(0)
+        # Store voltage (single value, not 9 separate)
+        if 'voltage' in data:
+            # Store single voltage value in voltage_data[0]
+            self.voltage_data[0].append(data['voltage'])
+            if len(self.voltage_data[0]) > self.max_points:
+                self.voltage_data[0].pop(0)
         
         # Update curves
         for i in range(self.num_sensors):
