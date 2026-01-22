@@ -83,3 +83,4 @@ CMakeLists.txt.user*
 .qtcreator/
 PyQt-Fluent-Widgets/
 PySide6-FluentUI-QML/
+dataset/

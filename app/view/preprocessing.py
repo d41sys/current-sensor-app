@@ -6,11 +6,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                 QTextEdit, QFileDialog, QTableWidget, QTableWidgetItem,
                                 QHeaderView, QSplitter, QDialog, QGridLayout,
-                                QSizePolicy, QStackedWidget)
+                                QSizePolicy, QStackedWidget, QFrame, QMenu,
+                                QListView, QTreeView, QAbstractItemView)
+from PySide6.QtGui import QAction
 from qfluentwidgets import (ScrollArea, PushButton, ComboBox, PrimaryPushButton, 
                             CheckBox, SpinBox, DoubleSpinBox, CardWidget, 
                             StrongBodyLabel, BodyLabel, InfoBar, InfoBarPosition,
-                            TabWidget, FluentIcon)
+                            TabWidget, FluentIcon, PrimaryDropDownPushButton, 
+                            RoundMenu, Action, DropDownPushButton)
 import pyqtgraph as pg
 
 # Import visualization functions
@@ -84,9 +87,13 @@ class VisualizationPopup(QDialog):
         
         filter_layout.addStretch()
         
-        # Export Button
-        self.export_btn = PushButton("Export Data")
-        self.export_btn.clicked.connect(self.__exportData)
+        # Export Button with dropdown menu
+        self.export_menu = RoundMenu(parent=self)
+        self.export_menu.addAction(Action(FluentIcon.DOCUMENT, 'Export as 1 File (11 columns)', triggered=self.__exportSingleFile))
+        self.export_menu.addAction(Action(FluentIcon.FOLDER, 'Export as 9 Files (separate segments)', triggered=self.__exportMultipleFiles))
+        
+        self.export_btn = DropDownPushButton(FluentIcon.SHARE, 'Export Data')
+        self.export_btn.setMenu(self.export_menu)
         filter_layout.addWidget(self.export_btn)
         
         main_layout.addWidget(filter_card)
@@ -495,6 +502,95 @@ class VisualizationPopup(QDialog):
         # Set integer ticks
         self.var_bar_plot.getAxis('bottom').setTicks([[(i, str(i)) for i in range(1, 10)]])
     
+    def __exportSingleFile(self):
+        """Export all data as a single CSV file with 11 columns (timestamp, 9x current, voltage)"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Single CSV File", f"combined_window_{self.window_index}.csv", "CSV Files (*.csv)"
+        )
+        
+        if file_path:
+            try:
+                combined_data = []
+                
+                for idx in range(len(self.dfs_filtered[0])):
+                    row = [self.dfs_filtered[0].iloc[idx]['time']]
+                    
+                    for i in range(9):
+                        if 'current_filt' in self.dfs_filtered[i].columns:
+                            row.append(self.dfs_filtered[i].iloc[idx]['current_filt'])
+                        else:
+                            row.append(self.dfs_filtered[i].iloc[idx]['current'])
+                    
+                    if 'voltage' in self.dfs_filtered[0].columns:
+                        row.append(self.dfs_filtered[0].iloc[idx]['voltage'])
+                    else:
+                        row.append(0.0)
+                    
+                    combined_data.append(row)
+                
+                columns = ['timestamp'] + [f'i{i+1}' for i in range(9)] + ['voltage']
+                df_export = pd.DataFrame(combined_data, columns=columns)
+                df_export.to_csv(file_path, index=False)
+                
+                InfoBar.success(
+                    title="Export Complete",
+                    content=f"Saved as {os.path.basename(file_path)} ({len(df_export)} rows, 11 columns)",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=3000
+                )
+            except Exception as e:
+                InfoBar.error(
+                    title="Export Error",
+                    content=str(e),
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=5000
+                )
+    
+    def __exportMultipleFiles(self):
+        """Export data as 9 separate CSV files (one per segment)"""
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Export Folder", "")
+        
+        if folder_path:
+            try:
+                for i, df_filt in enumerate(self.dfs_filtered):
+                    file_path = os.path.join(folder_path, f'segment_{i+1}_window_{self.window_index}.csv')
+                    df_filt.to_csv(file_path, index=False)
+                
+                stats_data = []
+                for i in range(9):
+                    mean_val, std_val = self.stats[i]
+                    h2_total = self.h2_data[i][1][-1] if len(self.h2_data[i][1]) > 0 else 0
+                    o2_total = self.o2_data[i][1][-1] if len(self.o2_data[i][1]) > 0 else 0
+                    stats_data.append({
+                        'Segment': i + 1,
+                        'Mean_A': mean_val,
+                        'Std_A': std_val,
+                        'Variance_A2': std_val ** 2,
+                        'H2_L': h2_total,
+                        'O2_L': o2_total
+                    })
+                
+                stats_df = pd.DataFrame(stats_data)
+                stats_df.to_csv(os.path.join(folder_path, f'statistics_window_{self.window_index}.csv'), index=False)
+                
+                InfoBar.success(
+                    title="Export Complete",
+                    content=f"Saved 9 segment files + statistics to {os.path.basename(folder_path)}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=3000
+                )
+            except Exception as e:
+                InfoBar.error(
+                    title="Export Error",
+                    content=str(e),
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=5000
+                )
+    
     def __exportData(self):
         """Export processed data"""
         folder_path = QFileDialog.getExistingDirectory(self, "Select Export Folder", "")
@@ -568,19 +664,32 @@ class PreprocessingInterface(ScrollArea):
         # === File Upload Section ===
         self.file_card = CardWidget(self.view)
         file_layout = QVBoxLayout(self.file_card)
+        file_layout.setSpacing(12)
         
-        file_header = StrongBodyLabel("1. Select Data Folder")
+        file_header = StrongBodyLabel("1. Load Data")
         file_layout.addWidget(file_header)
         
-        file_btn_layout = QHBoxLayout()
-        self.upload_btn = PrimaryPushButton("Select Folder (9 CSV Files)")
-        self.upload_btn.clicked.connect(self.upload_folder)
-        file_btn_layout.addWidget(self.upload_btn)
+        # Load button row
+        load_row = QHBoxLayout()
+        load_row.setSpacing(15)
         
-        self.file_label = BodyLabel("No folder selected")
-        file_btn_layout.addWidget(self.file_label)
-        file_btn_layout.addStretch()
-        file_layout.addLayout(file_btn_layout)
+        # Dropdown button with menu
+        self.load_menu = RoundMenu(parent=self)
+        self.load_menu.addAction(Action(FluentIcon.FOLDER, 'Load Folder', triggered=self._select_folder))
+        self.load_menu.addAction(Action(FluentIcon.DOCUMENT, 'Load File', triggered=self._select_file))
+        
+        self.load_btn = PrimaryDropDownPushButton(FluentIcon.ADD, 'Load Data')
+        self.load_btn.setMenu(self.load_menu)
+        self.load_btn.setFixedWidth(160)
+        load_row.addWidget(self.load_btn)
+        
+        # Status label
+        self.file_label = BodyLabel("No data loaded")
+        self.file_label.setStyleSheet("color: #7f8c8d; font-style: italic;")
+        load_row.addWidget(self.file_label)
+        
+        load_row.addStretch()
+        file_layout.addLayout(load_row)
         
         self.vBoxLayout.addWidget(self.file_card)
         
@@ -588,15 +697,38 @@ class PreprocessingInterface(ScrollArea):
         self.preview_card = CardWidget(self.view)
         preview_layout = QVBoxLayout(self.preview_card)
         
-        preview_header = StrongBodyLabel("2. Data Preview (First Segment)")
-        preview_layout.addWidget(preview_header)
+        # Header row with controls
+        preview_header_row = QHBoxLayout()
+        preview_header_row.addWidget(StrongBodyLabel("2. Data Preview"))
+        preview_header_row.addStretch()
+        
+        # View mode selector
+        preview_header_row.addWidget(BodyLabel("View:"))
+        self.preview_mode_combo = ComboBox()
+        self.preview_mode_combo.addItems(["All Columns (Combined)", "Single Segment"])
+        self.preview_mode_combo.setFixedWidth(180)
+        self.preview_mode_combo.currentIndexChanged.connect(self._on_preview_mode_changed)
+        preview_header_row.addWidget(self.preview_mode_combo)
+        
+        # Segment selector (hidden by default)
+        self.segment_label = BodyLabel("Segment:")
+        self.segment_combo = ComboBox()
+        self.segment_combo.addItems([f"Segment {i+1}" for i in range(9)])
+        self.segment_combo.setFixedWidth(120)
+        self.segment_combo.currentIndexChanged.connect(self.update_preview)
+        self.segment_label.setVisible(False)
+        self.segment_combo.setVisible(False)
+        preview_header_row.addWidget(self.segment_label)
+        preview_header_row.addWidget(self.segment_combo)
+        
+        preview_layout.addLayout(preview_header_row)
         
         self.data_table = QTableWidget()
-        self.data_table.setMaximumHeight(200)
+        self.data_table.setMaximumHeight(250)
         self.data_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         preview_layout.addWidget(self.data_table)
         
-        self.data_info_label = BodyLabel("Select a folder to see data preview")
+        self.data_info_label = BodyLabel("Select a folder or file to see data preview")
         preview_layout.addWidget(self.data_info_label)
         
         self.vBoxLayout.addWidget(self.preview_card)
@@ -679,8 +811,93 @@ class PreprocessingInterface(ScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
     
+    def _select_folder(self):
+        """Open folder dialog to select folder with 9 CSV files"""
+        folder_path = QFileDialog.getExistingDirectory(
+            self, "Select Folder with 9 CSV Files", ""
+        )
+        if folder_path:
+            try:
+                self._load_folder(folder_path)
+            except Exception as e:
+                InfoBar.error(
+                    title="Error",
+                    content=f"Failed to load folder: {str(e)}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=5000
+                )
+    
+    def _select_file(self):
+        """Open file dialog to select single CSV file with 11 columns"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select CSV File (11 columns)", "", "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            try:
+                df = pd.read_csv(file_path)
+                self._load_single_file(file_path, df)
+            except Exception as e:
+                InfoBar.error(
+                    title="Error",
+                    content=f"Failed to load file: {str(e)}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=5000
+                )
+    
+    def _load_single_file(self, file_path, df):
+        """Load single CSV file with 11 columns"""
+        # Expected format: timestamp (col 0), i1-i9 (cols 1-9), voltage (col 10)
+        self.dfs_raw = []
+        for i in range(9):
+            df_segment = pd.DataFrame({
+                'time': df.iloc[:, 0],
+                'current': df.iloc[:, i + 1],
+                'voltage': df.iloc[:, 10] if len(df.columns) > 10 else 0.0
+            })
+            self.dfs_raw.append(df_segment)
+        
+        self.folder_path = os.path.dirname(file_path)
+        self.file_label.setText(f"Loaded: {os.path.basename(file_path)} ({len(df)} rows, 11 cols)")
+        self.file_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+        self.update_preview()
+        self._reset_windows()
+        
+        InfoBar.success(
+            title="File Loaded",
+            content=f"Loaded {len(df)} samples from single file",
+            parent=self,
+            position=InfoBarPosition.TOP,
+            duration=3000
+        )
+    
+    def _load_folder(self, folder_path):
+        """Load folder with 9 CSV files"""
+        self.dfs_raw = load_signals_from_folder(folder_path, n_segments=9)
+        self.folder_path = folder_path
+        self.file_label.setText(f"Loaded: {os.path.basename(folder_path)}/ (9 files)")
+        self.file_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+        self.update_preview()
+        self._reset_windows()
+        
+        InfoBar.success(
+            title="Folder Loaded",
+            content=f"Loaded 9 CSV files with {len(self.dfs_raw[0])} samples each",
+            parent=self,
+            position=InfoBarPosition.TOP,
+            duration=3000
+        )
+    
+    def _reset_windows(self):
+        """Reset window settings after loading new data"""
+        self.time_windows = []
+        self.time_mask = []
+        self.window_index_spin.setRange(0, 0)
+        self.window_info_label.setText("No windows available - Calculate windows first")
+    
     def upload_folder(self):
-        """Select folder containing 9 CSV files"""
+        """Select folder containing 9 CSV files (Option A)"""
         folder_path = QFileDialog.getExistingDirectory(
             self, "Select Folder with 9 CSV Files", ""
         )
@@ -689,7 +906,8 @@ class PreprocessingInterface(ScrollArea):
             try:
                 self.dfs_raw = load_signals_from_folder(folder_path, n_segments=9)
                 self.folder_path = folder_path
-                self.file_label.setText(os.path.basename(folder_path))
+                self.file_label.setText(f"Loaded folder: {os.path.basename(folder_path)} (9 segments)")
+                self.file_label.setStyleSheet("color: #27ae60; font-weight: bold;")
                 self.update_preview()
                 
                 # Reset windows
@@ -714,14 +932,125 @@ class PreprocessingInterface(ScrollArea):
                     duration=5000
                 )
     
+    def upload_single_file(self):
+        """Select single CSV file with 11 columns (Option B: timestamp, 9 currents, voltage)"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select CSV File (11 columns)", "", "CSV Files (*.csv);;All Files (*)"
+        )
+        
+        if file_path:
+            try:
+                # Load single file and split into 9 segments
+                df = pd.read_csv(file_path, header=None)
+                
+                # Validate columns
+                if len(df.columns) < 11:
+                    raise ValueError(f"File has {len(df.columns)} columns, expected at least 11")
+                
+                # Expected format: timestamp (col 0), i1-i9 (cols 1-9), voltage (col 10)
+                # Create 9 separate DataFrames for each current sensor
+                self.dfs_raw = []
+                for i in range(9):
+                    df_segment = pd.DataFrame({
+                        'time': df.iloc[:, 0],  # timestamp
+                        'current': df.iloc[:, i + 1],  # current i1-i9
+                        'voltage': df.iloc[:, 10]  # voltage
+                    })
+                    self.dfs_raw.append(df_segment)
+                
+                self.folder_path = os.path.dirname(file_path)
+                self.file_label.setText(f"Loaded file: {os.path.basename(file_path)} (11 cols -> 9 segments)")
+                self.file_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+                self.update_preview()
+                
+                # Reset windows
+                self.time_windows = []
+                self.time_mask = []
+                self.window_index_spin.setRange(0, 0)
+                self.window_info_label.setText("No windows available - Calculate windows first")
+                
+                InfoBar.success(
+                    title="File Loaded",
+                    content=f"Loaded {len(df)} samples from {os.path.basename(file_path)}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=3000
+                )
+            except Exception as e:
+                InfoBar.error(
+                    title="Error",
+                    content=f"Failed to load file: {str(e)}",
+                    parent=self,
+                    position=InfoBarPosition.TOP,
+                    duration=5000
+                )
+    
+    def _on_preview_mode_changed(self, index):
+        """Handle preview mode change"""
+        is_single_segment = (index == 1)
+        self.segment_label.setVisible(is_single_segment)
+        self.segment_combo.setVisible(is_single_segment)
+        self.update_preview()
+    
     def update_preview(self):
-        """Update data preview table with first segment"""
+        """Update data preview table based on selected view mode"""
         if self.dfs_raw is None or len(self.dfs_raw) == 0:
             return
         
-        df_preview = self.dfs_raw[0]  # Show first segment
+        view_mode = self.preview_mode_combo.currentIndex()
         
-        # Show first 10 rows
+        if view_mode == 0:
+            # All Columns (Combined) - show all 9 currents + time + voltage in one view
+            self._show_combined_preview()
+        else:
+            # Single Segment - show selected segment
+            segment_idx = self.segment_combo.currentIndex()
+            self._show_segment_preview(segment_idx)
+    
+    def _show_combined_preview(self):
+        """Show combined preview with all columns"""
+        if self.dfs_raw is None or len(self.dfs_raw) == 0:
+            return
+        
+        # Build combined dataframe
+        df_first = self.dfs_raw[0]
+        n_rows = min(10, len(df_first))
+        
+        # Create columns: time, i1-i9, voltage
+        columns = ['time'] + [f'i{i+1}' for i in range(9)] + ['voltage']
+        
+        combined_data = []
+        for idx in range(n_rows):
+            row = [self.dfs_raw[0].iloc[idx]['time']]
+            for i in range(9):
+                row.append(self.dfs_raw[i].iloc[idx]['current'])
+            if 'voltage' in self.dfs_raw[0].columns:
+                row.append(self.dfs_raw[0].iloc[idx]['voltage'])
+            else:
+                row.append(0.0)
+            combined_data.append(row)
+        
+        self.data_table.setRowCount(n_rows)
+        self.data_table.setColumnCount(len(columns))
+        self.data_table.setHorizontalHeaderLabels(columns)
+        
+        for i, row in enumerate(combined_data):
+            for j, value in enumerate(row):
+                item = QTableWidgetItem(str(round(value, 6) if isinstance(value, (int, float)) else value))
+                self.data_table.setItem(i, j, item)
+        
+        # Update info label
+        total_samples = len(self.dfs_raw[0])
+        self.data_info_label.setText(
+            f"Combined view: 9 segments | {total_samples} samples | 11 columns (time, i1-i9, voltage)"
+        )
+    
+    def _show_segment_preview(self, segment_idx):
+        """Show preview for a single segment"""
+        if self.dfs_raw is None or segment_idx >= len(self.dfs_raw):
+            return
+        
+        df_preview = self.dfs_raw[segment_idx]
         preview = df_preview.head(10)
         
         self.data_table.setRowCount(len(preview))
@@ -734,12 +1063,11 @@ class PreprocessingInterface(ScrollArea):
                 self.data_table.setItem(i, j, item)
         
         # Update info label
-        total_samples = sum(len(df) for df in self.dfs_raw)
         self.data_info_label.setText(
-            f"Loaded: 9 segments | Total samples: {total_samples} | "
+            f"Segment {segment_idx + 1}: {len(df_preview)} samples | "
             f"Columns: {', '.join(df_preview.columns.tolist())}"
         )
-    
+
     def calculate_windows(self):
         """Calculate time windows based on settings"""
         if self.dfs_raw is None:
