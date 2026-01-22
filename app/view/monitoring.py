@@ -67,7 +67,7 @@ class SerialReaderThread(QThread):
                 currents = [float(parts[i]) / 1000.0 for i in range(1, 10)]
                 
                 # Voltage at index 10 - value in mV, convert to V
-                voltage = float(parts[10]) / 1000.0 if len(parts) > 10 else 0.0
+                voltage = float(parts[10]) if len(parts) > 10 else 0.0
                 
                 # Cycle time at index 11 (optional)
                 cycle_us = int(parts[11]) if len(parts) > 11 else 0
@@ -165,7 +165,7 @@ class SocketReaderThread(QThread):
                 currents = [float(parts[i]) / 1000.0 for i in range(1, 10)]
                 
                 # Voltage at index 10 - value in mV, convert to V
-                voltage = float(parts[10]) / 1000.0 if len(parts) > 10 else 0.0
+                voltage = float(parts[10]) if len(parts) > 10 else 0.0
                 
                 # Cycle time at index 11 (optional)
                 cycle_us = int(parts[11]) if len(parts) > 11 else 0
@@ -529,7 +529,7 @@ class USBDataInterface(ScrollArea):
             voltage = data.get('voltage', 0)
             avg_i = sum(data['currents']) / len(data['currents'])
             cycle_us = data.get('cycle_us', 0)
-            message = f"[{data['timestamp']}] t={pico_time} | Avg I: {avg_i:.4f}A | V: {voltage:.3f}V | Δ{cycle_us}μs"
+            message = f"[{data['timestamp']}] Avg I: {avg_i:.4f}A | V: {voltage:.3f}V | Cycle: {cycle_us}us"
         else:
             message = f"[{data['timestamp']}] {data.get('raw', 'No data')}"
         
