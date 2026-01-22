@@ -1,5 +1,6 @@
 # coding: utf-8
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, 
                                 QGridLayout, QGroupBox, QSplitter, QFrame)
 from qfluentwidgets import (ScrollArea, PushButton, ComboBox, PrimaryPushButton, 
@@ -538,8 +539,8 @@ class USBDataInterface(ScrollArea):
         # Limit log size
         if self.data_display.document().blockCount() > 500:
             cursor = self.data_display.textCursor()
-            cursor.movePosition(cursor.Start)
-            cursor.movePosition(cursor.Down, cursor.KeepAnchor, 100)
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor, 100)
             cursor.removeSelectedText()
         
         # Update chart data
