@@ -326,7 +326,7 @@ class USBDataInterface(ScrollArea):
         
         # Checkboxes in a row
         checkbox_row = QHBoxLayout()
-        checkbox_row.setSpacing(35)
+        checkbox_row.setSpacing(15 if self.is_windows else 35)
         
         self.sensor_checkboxes = []
         for i in range(self.num_sensors):
