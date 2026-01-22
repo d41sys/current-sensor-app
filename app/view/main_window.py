@@ -114,7 +114,7 @@ class MainWindow(FluentWindow):
         #     self.settingInterface, FIF.SETTING, self.tr('Settings'), NavigationItemPosition.BOTTOM)
 
     def initWindow(self):
-        self.resize(1440, 780)
+        self.resize(1600, 780)
         self.setMinimumWidth(760)
         self.setWindowIcon(QIcon(':/gallery/images/logo.png'))
         self.setWindowTitle('Measurement Toolkit')
