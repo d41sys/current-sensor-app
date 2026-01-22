@@ -103,11 +103,8 @@ def parse_pico_line(line_str: str):
         t_us = parts[0]
         # i1..i9 in mA ints, vbus_mV int, cycle_us int
         checksum = int(parts[-1])
-        print("CHECK: {checksum} at {t_us}")
         if checksum > CHECKSUM_THRESHOLD:
-            # Avoid printing in hot path if you're chasing latency
-            print("WARNING: {checksum} at {t_us}")
-            pass
+            print(f"WARNING: checksum={checksum} at t_us={t_us}")
         return parts, checksum, True
     except Exception:
         return None, None, False
@@ -134,24 +131,35 @@ def main():
  
                 buf = bytearray()
                 last_flush = time.time()
- 
+                MAX_BUF_SIZE = 1048576  # 1MB max buffer to prevent memory issues
+
                 while True:
+                    # Read available bytes (non-blocking)
                     n = ser.in_waiting
-                    chunk = ser.read(n if n else 4096)
-                    if not chunk:
-                        time.sleep(0.0005)
+                    if n > 0:
+                        chunk = ser.read(n)
+                        buf.extend(chunk)
+                    else:
+                        # Small sleep only when no data
+                        time.sleep(0.0001)
                         continue
- 
-                    buf.extend(chunk)
- 
-                    # Split into complete lines
-                    while True:
+
+                    # Prevent buffer overflow
+                    if len(buf) > MAX_BUF_SIZE:
+                        # Find last newline and keep from there
+                        last_nl = buf.rfind(b"\n")
+                        if last_nl >= 0:
+                            buf = buf[last_nl+1:]
+                        else:
+                            buf.clear()
+                        print("[WARN] Buffer overflow, dropped data")
+
+                    # Process complete lines
+                    while b"\n" in buf:
                         nl = buf.find(b"\n")
-                        if nl < 0:
-                            break
-                        line = buf[:nl+1]
+                        line = bytes(buf[:nl+1])
                         del buf[:nl+1]
- 
+                        
                         # FAST PATH: forward raw line to clients
                         broadcast(line)
  
