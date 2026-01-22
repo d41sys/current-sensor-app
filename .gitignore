@@ -84,3 +84,4 @@ CMakeLists.txt.user*
 PyQt-Fluent-Widgets/
 PySide6-FluentUI-QML/
 dataset/
+eth_receiver.py
