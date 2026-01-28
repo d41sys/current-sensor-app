@@ -453,6 +453,8 @@ class USBDataInterface(ScrollArea):
         
         self.setWidget(self.view)
         self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         # Apply border radius to match application style
         self.setStyleSheet("""
