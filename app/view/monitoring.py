@@ -1,18 +1,31 @@
 # coding: utf-8
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QTextCursor
+import numpy as np
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QTextCursor, QColor, QFont
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, 
-                                QGridLayout, QGroupBox, QSplitter, QFrame)
+                                QGridLayout, QGroupBox, QSplitter, QFrame, QStackedWidget,
+                                QSizePolicy, QSpacerItem, QFileDialog)
 from qfluentwidgets import (ScrollArea, PushButton, ComboBox, PrimaryPushButton, 
                             InfoBar, InfoBarPosition, CheckBox, LineEdit, CardWidget,
-                            StrongBodyLabel, BodyLabel)
+                            StrongBodyLabel, BodyLabel, CaptionLabel, SubtitleLabel,
+                            ToolButton, TransparentToolButton, ToggleButton,
+                            Slider, ProgressRing, IconWidget, SegmentedWidget,
+                            SimpleCardWidget, ElevatedCardWidget, FlowLayout,
+                            Pivot, SegmentedToggleToolWidget, PillPushButton,
+                            TransparentPushButton, PrimaryToolButton)
+from qfluentwidgets import FluentIcon as FIF
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
 import sys
 import os
 import platform
 import socket
 import serial
 from datetime import datetime
+
+# Constants for gas production calculation (Faraday's law)
+FARADAY = 96485.0          # C/mol
+MOLAR_VOLUME_STP = 22.414  # L/mol at STP
 
 
 class SerialReaderThread(QThread):
@@ -199,8 +212,201 @@ class SocketReaderThread(QThread):
                 pass
 
 
+# ============================================================================
+# SENSOR CARD WIDGET - Compact sensor display with click support
+# ============================================================================
+class SensorCard(QFrame):
+    """Compact sensor display card with toggle support"""
+    sensor_clicked = Signal(int)
+    
+    def __init__(self, index, color, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self.color = color
+        self.is_active = True
+        self.setFixedSize(92, 76)
+        self.setCursor(Qt.PointingHandCursor)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(3)
+        
+        # Sensor name with color indicator
+        self.name_label = CaptionLabel(f"E{index + 1}")
+        layout.addWidget(self.name_label, alignment=Qt.AlignCenter)
+        
+        # Current value
+        self.value_label = StrongBodyLabel("0.00")
+        layout.addWidget(self.value_label, alignment=Qt.AlignCenter)
+        
+        # Unit
+        self.unit_label = CaptionLabel("mA")
+        layout.addWidget(self.unit_label, alignment=Qt.AlignCenter)
+        
+        # Apply initial style after labels are created
+        self._update_style()
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press to emit clicked signal"""
+        if event.button() == Qt.LeftButton:
+            self.sensor_clicked.emit(self.index)
+        super().mousePressEvent(event)
+    
+    def _update_style(self):
+        """Update card style based on active state"""
+        if self.is_active:
+            # Darker shade for hover
+            hover_r = max(0, self.color[0] - 25)
+            hover_g = max(0, self.color[1] - 25)
+            hover_b = max(0, self.color[2] - 25)
+            self.setStyleSheet(f"""
+                SensorCard {{
+                    background-color: rgb({self.color[0]}, {self.color[1]}, {self.color[2]});
+                    border-radius: 6px;
+                    border: none;
+                }}
+                SensorCard:hover {{
+                    background-color: rgb({hover_r}, {hover_g}, {hover_b});
+                }}
+            """)
+            # White text on colored background
+            self.name_label.setStyleSheet("background: transparent; color: #ffffff; font-weight: 600; font-size: 11px;")
+            self.value_label.setStyleSheet("background: transparent; font-size: 15px; font-weight: 600; color: #ffffff;")
+            self.unit_label.setStyleSheet("background: transparent; color: rgba(255,255,255,0.85); font-size: 10px;")
+        else:
+            self.setStyleSheet("""
+                SensorCard {
+                    background-color: #f3f4f6;
+                    border-radius: 6px;
+                    border: none;
+                }
+                SensorCard:hover {
+                    background-color: #e5e7eb;
+                }
+            """)
+            # Colored name on gray background
+            self.name_label.setStyleSheet(f"background: transparent; color: rgb({self.color[0]}, {self.color[1]}, {self.color[2]}); font-weight: 600; font-size: 11px;")
+            self.value_label.setStyleSheet("background: transparent; font-size: 15px; font-weight: 600; color: #9ca3af;")
+            self.unit_label.setStyleSheet("background: transparent; color: #d1d5db; font-size: 10px;")
+    
+    def setActive(self, active):
+        """Set active state"""
+        self.is_active = active
+        self._update_style()
+    
+    def setValue(self, value):
+        self.value_label.setText(f"{value:.2f}")
+
+
+# ============================================================================
+# HEATMAP CARD - Individual heatmap display
+# ============================================================================
+class HeatmapCard(CardWidget):
+    """Heatmap display with title and stats"""
+    
+    def __init__(self, title, colormap_colors, bg_color="#fafafa", value_color="#333", parent=None):
+        super().__init__(parent)
+        self.value_color = value_color
+        self.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        
+        # Header
+        self.title_label = StrongBodyLabel(title)
+        layout.addWidget(self.title_label)
+        
+        # Heatmap container - no border, just background
+        heatmap_container = QFrame()
+        heatmap_container.setStyleSheet(f"""
+            QFrame {{
+                background: {bg_color};
+                border-radius: 8px;
+                border: none;
+            }}
+        """)
+        heatmap_layout = QVBoxLayout(heatmap_container)
+        heatmap_layout.setContentsMargins(4, 4, 4, 4)
+        
+        # Heatmap
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground(bg_color)
+        self.plot_widget.setAspectLocked(True)
+        self.plot_widget.hideAxis('bottom')
+        self.plot_widget.hideAxis('left')
+        self.plot_widget.setMinimumSize(200, 200)
+        
+        self.image_item = pg.ImageItem()
+        self.plot_widget.addItem(self.image_item)
+        
+        # Colormap
+        positions = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        self.colormap = pg.ColorMap(positions, colormap_colors)
+        self.image_item.setLookupTable(self.colormap.getLookupTable(0.0, 1.0, 256))
+        
+        # Text overlays - use dark color for visibility
+        self.texts = []
+        for row in range(3):
+            row_texts = []
+            for col in range(3):
+                text = pg.TextItem(text="0.00", color=(15, 23, 42), anchor=(0.5, 0.5))  # Dark slate
+                text.setPos(col + 0.5, row + 0.5)
+                font = QFont()
+                font.setBold(True)
+                font.setPointSize(11)
+                text.setFont(font)
+                self.plot_widget.addItem(text)
+                row_texts.append(text)
+            self.texts.append(row_texts)
+        
+        self.plot_widget.setXRange(0, 3, padding=0.05)
+        self.plot_widget.setYRange(0, 3, padding=0.05)
+        
+        heatmap_layout.addWidget(self.plot_widget)
+        layout.addWidget(heatmap_container)
+        
+        # Total value with styled container
+        total_container = QFrame()
+        total_container.setStyleSheet(f"""
+            QFrame {{
+                background: {bg_color};
+                border-radius: 8px;
+                padding: 8px;
+            }}
+        """)
+        total_layout = QVBoxLayout(total_container)
+        total_layout.setContentsMargins(12, 8, 12, 8)
+        
+        self.total_label = SubtitleLabel("Total: 0.00")
+        self.total_label.setStyleSheet(f"color: {value_color}; font-size: 18px; font-weight: 600;")
+        total_layout.addWidget(self.total_label, alignment=Qt.AlignCenter)
+        
+        layout.addWidget(total_container)
+    
+    def setValues(self, values, unit="", decimal=2):
+        """Update heatmap with 9 values"""
+        matrix = np.array(values[:9]).reshape(3, 3)
+        max_val = max(matrix.max(), 0.001)
+        
+        self.image_item.setImage(matrix, levels=(0, max_val))
+        
+        total = sum(values[:9])
+        self.total_label.setText(f"Total: {total:.{decimal}f} {unit}")
+        
+        for i in range(9):
+            row, col = i // 3, i % 3
+            val = values[i]
+            self.texts[row][col].setText(f"{val:.{decimal}f}")
+            # Always use dark text for better readability
+            self.texts[row][col].setColor((15, 23, 42))  # Dark slate
+
+
+# ============================================================================
+# MAIN INTERFACE
+# ============================================================================
 class USBDataInterface(ScrollArea):
-    """USB Data Processor Interface - Real-time Monitoring"""
+    """Real-time Current Monitoring Dashboard"""
     
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -209,408 +415,871 @@ class USBDataInterface(ScrollArea):
         self.data_reader = None
         self.is_windows = platform.system() == 'Windows'
         
-        # Data structures for 9 sensors
+        # Data structures
         self.num_sensors = 9
-        self.voltage_data = [[] for _ in range(self.num_sensors)]
+        self.voltage_data = []
         self.current_data = [[] for _ in range(self.num_sensors)]
+        self.time_data = [[] for _ in range(self.num_sensors)]
         self.max_points = 400
         
-        # Colors for each sensor
+        # Gas production
+        self.h2_production = [0.0] * self.num_sensors
+        self.o2_production = [0.0] * self.num_sensors
+        self.sample_count = 0
+        self.gas_update_interval = 100
+        self.last_gas_time = None
+        
+        # Sensor colors (9 electrodes + 1 voltage) - Tailwind CSS Colors (600 shades)
         self.colors = [
-            (231, 76, 60),    # Red
-            (52, 152, 219),   # Blue
-            (241, 196, 15),   # Yellow
-            (26, 188, 156),   # Teal
-            (155, 89, 182),   # Purple
-            (230, 126, 34),   # Orange
-            (46, 204, 113),   # Green
-            (142, 68, 173),   # Violet
-            (52, 73, 94),     # Dark Blue
+            (220, 38, 38),    # red-600
+            (37, 99, 235),    # blue-600
+            (22, 163, 74),    # green-600
+            (202, 138, 4),    # yellow-600
+            (147, 51, 234),   # purple-600
+            (234, 88, 12),    # orange-600
+            (8, 145, 178),    # cyan-600
+            (79, 70, 229),    # indigo-600
+            (219, 39, 119),   # pink-600
+            (37, 99, 235),    # Voltage - blue-600
         ]
         
         self.view = QWidget(self)
-        self.vBoxLayout = QVBoxLayout(self.view)
-        self.vBoxLayout.setContentsMargins(20, 20, 20, 20)
-        self.vBoxLayout.setSpacing(15)
+        self.view.setObjectName('monitoringView')
+        self.mainLayout = QVBoxLayout(self.view)
+        self.mainLayout.setContentsMargins(0, 0, 0, 0)
+        self.mainLayout.setSpacing(0)
         
-        self.__initWidget()
-    
-    def __initWidget(self):
-        """Initialize widgets"""
-        self.view.setObjectName('view')
-        
-        # ===== TOP CONTROL BAR =====
-        control_card = CardWidget(self)
-        control_layout = QHBoxLayout(control_card)
-        control_layout.setSpacing(20)
-        
-        # --- Connection Section ---
-        conn_section = QVBoxLayout()
-        conn_section.setSpacing(8)
-        
-        conn_header = StrongBodyLabel("Connection")
-        conn_section.addWidget(conn_header)
-        
-        # Mode + IP/Port in one row
-        conn_row1 = QHBoxLayout()
-        conn_row1.setSpacing(10)
-        
-        self.mode_combo = ComboBox()
-        self.mode_combo.addItem("🔌 Serial" if not self.is_windows else "🔌 COM")
-        self.mode_combo.addItem("🌐 Socket")
-        self.mode_combo.setCurrentIndex(1 if self.is_windows else 0)
-        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
-        self.mode_combo.setFixedWidth(120)
-        conn_row1.addWidget(self.mode_combo)
-        
-        self.ip_label = BodyLabel("IP:")
-        conn_row1.addWidget(self.ip_label)
-        self.ip_input = LineEdit()
-        self.ip_input.setText("192.168.50.2")
-        self.ip_input.setFixedWidth(120)
-        conn_row1.addWidget(self.ip_input)
-        
-        self.port_label = BodyLabel("Port:")
-        conn_row1.addWidget(self.port_label)
-        self.port_input = LineEdit()
-        self.port_input.setText("5000")
-        self.port_input.setFixedWidth(60)
-        conn_row1.addWidget(self.port_input)
-        
-        conn_section.addLayout(conn_row1)
-        
-        # Buttons row
-        conn_row2 = QHBoxLayout()
-        conn_row2.setSpacing(8)
-        
-        self.connect_btn = PrimaryPushButton("▶ Connect")
-        self.connect_btn.clicked.connect(self.connect_data_source)
-        self.connect_btn.setFixedWidth(120)
-        conn_row2.addWidget(self.connect_btn)
-        
-        self.disconnect_btn = PushButton("⏹ Disconnect")
-        self.disconnect_btn.clicked.connect(self.disconnect_data_source)
-        self.disconnect_btn.setEnabled(False)
-        self.disconnect_btn.setFixedWidth(120)
-        conn_row2.addWidget(self.disconnect_btn)
-        
-        self.status_indicator = QFrame()
-        self.status_indicator.setFixedSize(12, 12)
-        self.status_indicator.setStyleSheet("background-color: #95a5a6; border-radius: 6px;")
-        conn_row2.addWidget(self.status_indicator)
-        
-        self.status_label = BodyLabel("Disconnected")
-        conn_row2.addWidget(self.status_label)
-        conn_row2.addStretch()
-        
-        conn_section.addLayout(conn_row2)
-        control_layout.addLayout(conn_section)
-        
-        # Vertical separator
-        separator1 = QFrame()
-        separator1.setFrameShape(QFrame.VLine)
-        separator1.setStyleSheet("color: #ddd;")
-        control_layout.addWidget(separator1)
-        
-        # --- Sensor Visibility Section ---
-        sensor_section = QVBoxLayout()
-        sensor_section.setSpacing(8)
-        
-        sensor_header = StrongBodyLabel("Sensors")
-        sensor_section.addWidget(sensor_header)
-        
-        # Checkboxes in a row
-        checkbox_row = QHBoxLayout()
-        checkbox_row.setSpacing(15 if self.is_windows else 35)
-        
-        self.sensor_checkboxes = []
-        for i in range(self.num_sensors):
-            cb = CheckBox(f" E{i+1}")
-            cb.setChecked(True)
-            cb.stateChanged.connect(lambda state, idx=i: self.toggle_sensor(idx, state))
-            color = self.colors[i]
-            cb.setStyleSheet(f"CheckBox {{ color: rgb({color[0]}, {color[1]}, {color[2]}); font-weight: bold; }}")
-            self.sensor_checkboxes.append(cb)
-            checkbox_row.addWidget(cb)
-        
-        sensor_section.addLayout(checkbox_row)
-        
-        # All/None buttons
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-        
-        self.select_all_btn = PushButton("All")
-        self.select_all_btn.clicked.connect(self.select_all_sensors)
-        self.select_all_btn.setFixedWidth(80)
-        btn_row.addWidget(self.select_all_btn)
-        
-        self.deselect_all_btn = PushButton("None")
-        self.deselect_all_btn.clicked.connect(self.deselect_all_sensors)
-        self.deselect_all_btn.setFixedWidth(80)
-        btn_row.addWidget(self.deselect_all_btn)
-        btn_row.addStretch()
-        
-        sensor_section.addLayout(btn_row)
-        control_layout.addLayout(sensor_section)
-        
-        # Vertical separator
-        separator2 = QFrame()
-        separator2.setFrameShape(QFrame.VLine)
-        separator2.setStyleSheet("color: #ddd;")
-        control_layout.addWidget(separator2)
-        
-        # --- Actions Section ---
-        actions_section = QVBoxLayout()
-        actions_section.setSpacing(8)
-        
-        actions_header = StrongBodyLabel("Actions")
-        actions_section.addWidget(actions_header)
-        
-        actions_row = QHBoxLayout()
-        actions_row.setSpacing(10)
-        
-        self.clear_btn = PushButton("🗑️ Clear")
-        self.clear_btn.clicked.connect(self.clear_data)
-        self.clear_btn.setFixedWidth(120)
-        actions_row.addWidget(self.clear_btn)
-        
-        self.export_btn = PushButton("💾 Export")
-        self.export_btn.clicked.connect(self.export_chart)
-        self.export_btn.setFixedWidth(120)
-        actions_row.addWidget(self.export_btn)
-        
-        actions_section.addLayout(actions_row)
-        actions_section.addStretch()
-        
-        control_layout.addLayout(actions_section)
-        control_layout.addStretch()
-        
-        self.vBoxLayout.addWidget(control_card)
-        
-        # Update visibility based on mode
-        self.on_mode_changed(self.mode_combo.currentIndex())
-        
-        # ===== MAIN CONTENT: Chart + Log (Horizontal Split) =====
-        main_splitter = QSplitter(Qt.Horizontal)
-        main_splitter.setHandleWidth(8)
-        
-        # --- Chart (Left side - bigger) ---
-        chart_container = QWidget()
-        chart_layout = QVBoxLayout(chart_container)
-        chart_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.plot_widget = pg.PlotWidget()
-        self.plot_widget.setBackground('#fafafa')
-        self.plot_widget.setTitle("Real-time Current Monitor", color="#2c3e50", size="16pt")
-        self.plot_widget.setLabel('left', 'Current (A)', color='#2c3e50')
-        self.plot_widget.setLabel('bottom', 'Time (s)', color='#2c3e50')
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.2)
-        self.plot_widget.addLegend(offset=(10, 10))
-        self.plot_widget.setMinimumWidth(500)
-        
-        # Create curves
-        self.current_curves = []
-        for i in range(self.num_sensors):
-            curve = self.plot_widget.plot(
-                pen=pg.mkPen(color=self.colors[i], width=2),
-                name=f"S{i+1}"
-            )
-            self.current_curves.append(curve)
-        
-        chart_layout.addWidget(self.plot_widget)
-        main_splitter.addWidget(chart_container)
-        
-        # --- Log Panel (Right side) ---
-        log_container = CardWidget()
-        log_layout = QVBoxLayout(log_container)
-        log_layout.setContentsMargins(15, 15, 15, 15)
-        
-        log_header = StrongBodyLabel("📋 Data Log")
-        log_layout.addWidget(log_header)
-        
-        self.data_display = QTextEdit()
-        self.data_display.setReadOnly(True)
-        self.data_display.setPlaceholderText("Waiting for data...")
-        self.data_display.setStyleSheet("""
-            QTextEdit {
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 11px;
-                background-color: #f8f9fa;
-                border: 1px solid #e9ecef;
-                border-radius: 8px;
-                padding: 10px;
-            }
-        """)
-        self.data_display.setMinimumWidth(280)
-        log_layout.addWidget(self.data_display)
-        
-        main_splitter.addWidget(log_container)
-        
-        # Set initial sizes (70% chart, 30% log)
-        main_splitter.setSizes([700, 300])
-        
-        self.vBoxLayout.addWidget(main_splitter, 1)  # stretch=1 to fill space
+        self._initUI()
         
         self.setWidget(self.view)
         self.setWidgetResizable(True)
+        
+        # Apply border radius to match application style
+        self.setStyleSheet("""
+            ScrollArea {
+                background: transparent;
+                border: none;
+                border-top-left-radius: 10px;
+            }
+            #monitoringView {
+                background: transparent;
+                border-top-left-radius: 10px;
+            }
+        """)
     
-    # ===== METHODS =====
+    def _initUI(self):
+        """Initialize the UI"""
+        
+        # =====================================================================
+        # CONNECTION BAR - Minimal & Clean
+        # =====================================================================
+        conn_bar = QWidget()
+        conn_bar.setFixedHeight(56)
+        conn_bar.setStyleSheet("""
+            QWidget {
+                background: #ffffff;
+                border-top-left-radius: 12px;
+            }
+        """)
+        conn_layout = QHBoxLayout(conn_bar)
+        conn_layout.setContentsMargins(24, 12, 24, 12)
+        conn_layout.setSpacing(12)
+        
+        # Connection Mode - track state with variable since currentItem() can be unreliable
+        self.connection_mode = "socket" if self.is_windows else "serial"
+        self.mode_toggle = SegmentedWidget()
+        self.mode_toggle.addItem(routeKey="serial", text="Serial")
+        self.mode_toggle.addItem(routeKey="socket", text="Socket")
+        self.mode_toggle.setCurrentItem(self.connection_mode)
+        self.mode_toggle.setFixedWidth(180)
+        self.mode_toggle.currentItemChanged.connect(self._on_mode_changed)
+        conn_layout.addWidget(self.mode_toggle)
+        
+        conn_layout.addSpacing(8)
+        
+        # IP & Port inputs
+        self.ip_label = CaptionLabel("Host")
+        self.ip_label.setStyleSheet("color: #6b7280; font-weight: 500;")
+        conn_layout.addWidget(self.ip_label)
+        
+        self.ip_input = LineEdit()
+        self.ip_input.setText("192.168.50.2")
+        self.ip_input.setFixedWidth(130)
+        self.ip_input.setFixedHeight(34)
+        # self.ip_input.setStyleSheet("""
+        #     LineEdit {
+        #         background: #6b7280;
+        #         border: 1px solid #e2e8f0;
+        #         border-radius: 8px;
+        #         padding: 0 12px;
+        #     }
+        #     LineEdit:hover {
+        #         border: 1px solid #cbd5e1;
+        #     }
+        #     LineEdit:focus {
+        #         border: 1px solid #94a3b8;
+        #         background: #ffffff;
+        #     }
+        # """)
+        conn_layout.addWidget(self.ip_input)
+        
+        self.port_label = CaptionLabel("Port")
+        self.port_label.setStyleSheet("color: #6b7280; font-weight: 500;")
+        conn_layout.addWidget(self.port_label)
+        
+        self.port_input = LineEdit()
+        self.port_input.setText("5000")
+        self.port_input.setFixedWidth(70)
+        self.port_input.setFixedHeight(34)
+        # self.port_input.setStyleSheet("""
+        #     LineEdit {
+        #         background: #f8fafc;
+        #         border: 1px solid #e2e8f0;
+        #         border-radius: 8px;
+        #         padding: 0 12px;
+        #     }
+        #     LineEdit:hover {
+        #         border: 1px solid #cbd5e1;
+        #     }
+        #     LineEdit:focus {
+        #         border: 1px solid #94a3b8;
+        #         background: #ffffff;
+        #     }
+        # """)
+        conn_layout.addWidget(self.port_input)
+        
+        conn_layout.addStretch()
+        
+        # Status Pill - wrapped in a styled container
+        status_container = QWidget()
+        status_container.setStyleSheet("""
+            QWidget {
+                background: #e5e7eb;
+                border-radius: 16px;
+            }
+        """)
+        status_layout = QHBoxLayout(status_container)
+        status_layout.setContentsMargins(12, 6, 12, 6)
+        status_layout.setSpacing(6)
+        
+        self.status_dot = QLabel("●")
+        self.status_dot.setStyleSheet("color: #9ca3af; font-size: 10px; background: transparent;")
+        status_layout.addWidget(self.status_dot)
+        
+        self.status_label = CaptionLabel("Disconnected")
+        self.status_label.setStyleSheet("color: #6b7280; font-weight: 500; background: transparent;")
+        status_layout.addWidget(self.status_label)
+        
+        conn_layout.addWidget(status_container)
+        
+        conn_layout.addSpacing(12)
+        
+        # Connect Button - Use default fluent style
+        self.connect_btn = PrimaryPushButton("Connect")
+        self.connect_btn.setFixedSize(100, 34)
+        self.connect_btn.clicked.connect(self._toggle_connection)
+        conn_layout.addWidget(self.connect_btn)
+        
+        self.mainLayout.addWidget(conn_bar)
+        
+        # Update visibility based on initial mode
+        self._update_mode_visibility()
+        
+        # =====================================================================
+        # TAB NAVIGATION - Clean Tab Style
+        # =====================================================================
+        pivot_bar = QWidget()
+        pivot_bar.setFixedHeight(44)
+        pivot_bar.setStyleSheet("""
+            QWidget {
+                background: #ffffff;
+                border-bottom: 1px solid #dcdcdc;
+            }
+        """)
+        pivot_layout = QHBoxLayout(pivot_bar)
+        pivot_layout.setContentsMargins(24, 0, 24, 0)
+        pivot_layout.setSpacing(0)
+        
+        # Pivot - clean fluent style navigation with custom styling
+        self.pivot = Pivot()
+        self.pivot.addItem(routeKey="chartView", text="Line Chart")
+        self.pivot.addItem(routeKey="heatmapView", text="Heatmaps")
+        self.pivot.setCurrentItem("chartView")
+        self.pivot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        # Custom pivot styling
+        self.pivot.setStyleSheet("""
+            Pivot {
+                background: transparent;
+                border: none;
+            }
+            Pivot::pane {
+                border: none;
+                background: transparent;
+            }
+            PivotItem {
+                background: transparent;
+                padding: 10px 24px;
+                font-size: 13px;
+                font-weight: 500;
+                color: #6b7280;
+                border: none;
+            }
+            PivotItem:hover {
+                background: rgba(0, 0, 0, 0.04);
+                border-radius: 6px;
+            }
+            PivotItem:checked {
+                color: #0f172a;
+                font-weight: 600;
+                border-bottom: 2px solid #0f172a;
+            }
+        """)
+        
+        pivot_layout.addWidget(self.pivot, 1)
+        
+        self.mainLayout.addWidget(pivot_bar)
+        
+        # =====================================================================
+        # STACKED CONTENT
+        # =====================================================================
+        self.stack = QStackedWidget()
+        
+        # ----- TAB 1: LINE CHART VIEW -----
+        chart_view = QWidget()
+        chart_view.setObjectName("chartView")  # For pivot navigation
+        # chart_view.setStyleSheet("background: #f8fafa;")
+        chart_main = QHBoxLayout(chart_view)
+        chart_main.setContentsMargins(20, 20, 20, 20)
+        chart_main.setSpacing(16)
+        
+        # Left: Chart + Sensors
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(10)
+        
+        # Chart Card
+        chart_card = CardWidget()
+        chart_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
+        # chart_card.setStyleSheet("""
+        #     CardWidget {
+        #         background: #ffffff;
+        #         border: none;
+        #         border-radius: 12px;
+        #     }
+        # """)
+        chart_card_layout = QVBoxLayout(chart_card)
+        chart_card_layout.setContentsMargins(16, 16, 16, 16)
+        chart_card_layout.setSpacing(12)
+        
+        # Chart Header
+        chart_header = QHBoxLayout()
+        chart_title = StrongBodyLabel("Real-time Current Monitor")
+        # chart_title.setStyleSheet("background: transparent;")
+        chart_header.addWidget(chart_title)
+        chart_header.addStretch()
+        
+        self.clear_btn = TransparentToolButton(FIF.DELETE)
+        self.clear_btn.setToolTip("Clear Data")
+        self.clear_btn.clicked.connect(self._clear_data)
+        chart_header.addWidget(self.clear_btn)
+        
+        self.export_btn = TransparentToolButton(FIF.SAVE)
+        self.export_btn.setToolTip("Export Chart")
+        self.export_btn.clicked.connect(self._export_chart)
+        chart_header.addWidget(self.export_btn)
+        
+        chart_card_layout.addLayout(chart_header)
+        
+        # PyQtGraph
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('#fafbfa')
+        self.plot_widget.setLabel('left', 'Current (A)', color='#4b5563')
+        self.plot_widget.setLabel('bottom', 'Time (s)', color='#4b5563')
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.12)
+        self.plot_widget.setMinimumHeight(300)
+        self.plot_widget.getAxis('left').setTextPen('#6b7280')
+        self.plot_widget.getAxis('bottom').setTextPen('#6b7280')
+        self.plot_widget.getAxis('left').setPen(pg.mkPen('#d1d5db', width=1))
+        self.plot_widget.getAxis('bottom').setPen(pg.mkPen('#d1d5db', width=1))
+        
+        self.current_curves = []
+        for i in range(self.num_sensors):
+            pen = pg.mkPen(color=self.colors[i], width=2)
+            curve = self.plot_widget.plot(pen=pen, name=f"E{i+1}")
+            self.current_curves.append(curve)
+        
+        chart_card_layout.addWidget(self.plot_widget)
+        left_layout.addWidget(chart_card, stretch=1)
+        
+        # Sensor Cards Row
+        sensor_card = CardWidget()
+        sensor_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
+        sensor_layout = QVBoxLayout(sensor_card)
+        sensor_layout.setContentsMargins(16, 14, 16, 14)
+        sensor_layout.setSpacing(10)
+        
+        sensor_header = QHBoxLayout()
+        sensor_title = StrongBodyLabel("Electrode Currents")
+        sensor_title.setStyleSheet("background: transparent;")
+        sensor_header.addWidget(sensor_title)
+        sensor_header.addStretch()
+        
+        self.toggle_all_btn = TransparentToolButton(FIF.VIEW)
+        self.toggle_all_btn.setToolTip("Toggle All Sensors")
+        self.toggle_all_btn.clicked.connect(self._toggle_all_sensors)
+        sensor_header.addWidget(self.toggle_all_btn)
+        
+        sensor_layout.addLayout(sensor_header)
+        
+        sensor_grid = QHBoxLayout()
+        sensor_grid.setSpacing(6)
+        
+        self.sensor_cards = []
+        self.sensor_visible = [True] * 10  # 9 electrodes + 1 voltage
+        for i in range(9):
+            card = SensorCard(i, self.colors[i])
+            card.sensor_clicked.connect(self._toggle_sensor)
+            self.sensor_cards.append(card)
+            sensor_grid.addWidget(card)
+        
+        # Add voltage card
+        self.voltage_card = SensorCard(9, self.colors[9])
+        self.voltage_card.name_label.setText("V")
+        self.voltage_card.unit_label.setText("V")
+        self.voltage_card.sensor_clicked.connect(self._toggle_sensor)
+        self.sensor_cards.append(self.voltage_card)
+        sensor_grid.addWidget(self.voltage_card)
+        
+        sensor_layout.addLayout(sensor_grid)
+        left_layout.addWidget(sensor_card)
+        
+        chart_main.addWidget(left_panel, stretch=3)
+        
+        # Right: Log Panel
+        right_panel = CardWidget()
+        right_panel.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(16, 16, 16, 16)
+        right_layout.setSpacing(10)
+        
+        log_header = QHBoxLayout()
+        log_title = StrongBodyLabel("Data Log")
+        log_title.setStyleSheet("background: transparent;")
+        log_header.addWidget(log_title)
+        log_header.addStretch()
+        
+        self.clear_log_btn = TransparentToolButton(FIF.DELETE)
+        self.clear_log_btn.setToolTip("Clear Log")
+        self.clear_log_btn.clicked.connect(lambda: self.log_text.clear())
+        log_header.addWidget(self.clear_log_btn)
+        
+        right_layout.addLayout(log_header)
+        
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setPlaceholderText("Waiting for data...")
+        self.log_text.setStyleSheet("""
+            QTextEdit {
+                font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+                font-size: 11px;
+                background: #f1f5f9;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 10px;
+                line-height: 1.5;
+            }
+            QTextEdit:hover {
+                border: 1px solid #cbd5e1;
+            }
+        """)
+        right_layout.addWidget(self.log_text)
+        
+        chart_main.addWidget(right_panel, stretch=1)
+        
+        self.stack.addWidget(chart_view)
+        
+        # ----- TAB 2: HEATMAP VIEW -----
+        heatmap_view = QWidget()
+        heatmap_view.setObjectName("heatmapView")  # For pivot navigation
+        # heatmap_view.setStyleSheet("background: #f8fafc;")
+        heatmap_main = QVBoxLayout(heatmap_view)
+        heatmap_main.setContentsMargins(20, 20, 20, 20)
+        heatmap_main.setSpacing(16)
+        
+        # Heatmap header with export button
+        heatmap_header = QHBoxLayout()
+        heatmap_title = StrongBodyLabel("Electrode Heatmaps")
+        heatmap_header.addWidget(heatmap_title)
+        heatmap_header.addStretch()
+        
+        self.export_heatmap_btn = TransparentToolButton(FIF.SAVE)
+        self.export_heatmap_btn.setToolTip("Export Heatmaps")
+        self.export_heatmap_btn.clicked.connect(self._export_heatmaps)
+        heatmap_header.addWidget(self.export_heatmap_btn)
+        
+        heatmap_main.addLayout(heatmap_header)
+        
+        # Top Row: 3 Heatmaps
+        heatmap_row = QHBoxLayout()
+        heatmap_row.setSpacing(12)
+        
+        # Current Heatmap - Solid red gradient
+        current_colors = [
+            (255, 245, 245),  # Very light red
+            (254, 178, 178),  # Light red
+            (252, 129, 129),  # Medium light
+            (239, 68, 68),    # Red
+            (220, 38, 38),    # Dark red
+            (185, 28, 28),    # Very dark red
+        ]
+        self.current_heatmap = HeatmapCard("Current (mA)", current_colors, "#fff5f5", "#dc2626")
+        heatmap_row.addWidget(self.current_heatmap)
+        
+        # H2 Heatmap - Solid blue gradient
+        h2_colors = [
+            (239, 246, 255),  # Very light blue
+            (191, 219, 254),  # Light blue
+            (147, 197, 253),  # Medium light
+            (59, 130, 246),   # Blue
+            (37, 99, 235),    # Dark blue
+            (29, 78, 216),    # Very dark blue
+        ]
+        self.h2_heatmap = HeatmapCard("H₂ Production (L)", h2_colors, "#eff6ff", "#2563eb")
+        heatmap_row.addWidget(self.h2_heatmap)
+        
+        # O2 Heatmap - Solid green gradient
+        o2_colors = [
+            (236, 253, 245),  # Very light green
+            (167, 243, 208),  # Light green
+            (110, 231, 183),  # Medium light
+            (52, 211, 153),   # Green
+            (16, 185, 129),   # Dark green
+            (5, 150, 105),    # Very dark green
+        ]
+        self.o2_heatmap = HeatmapCard("O₂ Production (L)", o2_colors, "#ecfdf5", "#059669")
+        heatmap_row.addWidget(self.o2_heatmap)
+        
+        heatmap_main.addLayout(heatmap_row, stretch=2)
+        
+        # Bottom Row: Stats & Controls
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(12)
+        
+        # Gas Production Summary Card
+        gas_card = CardWidget()
+        gas_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
+        gas_layout = QVBoxLayout(gas_card)
+        gas_layout.setContentsMargins(20, 18, 20, 18)
+        gas_layout.setSpacing(14)
+        
+        gas_header = QHBoxLayout()
+        gas_title = StrongBodyLabel("Gas Production Summary")
+        gas_title.setStyleSheet("background: transparent;")
+        gas_header.addWidget(gas_title)
+        gas_header.addStretch()
+        
+        self.reset_gas_btn = TransparentToolButton(FIF.SYNC)
+        self.reset_gas_btn.setToolTip("Reset Calculations")
+        self.reset_gas_btn.clicked.connect(self._reset_gas_production)
+        gas_header.addWidget(self.reset_gas_btn)
+        
+        gas_layout.addLayout(gas_header)
+        
+        # Gas stats grid - simple solid colors
+        gas_grid = QGridLayout()
+        gas_grid.setSpacing(12)
+        
+        # H2 Stats
+        h2_frame = QFrame()
+        h2_frame.setStyleSheet("""
+            QFrame {
+                background: #dbeafe;
+                border-radius: 8px;
+            }
+        """)
+        h2_inner = QVBoxLayout(h2_frame)
+        h2_inner.setContentsMargins(16, 12, 16, 12)
+        h2_inner.setSpacing(4)
+        h2_icon = SubtitleLabel("H₂")
+        h2_icon.setStyleSheet("color: #1e40af; font-size: 13px; font-weight: 600;")
+        h2_inner.addWidget(h2_icon)
+        self.h2_total_label = SubtitleLabel("0.0000 L")
+        self.h2_total_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #1d4ed8;")
+        h2_inner.addWidget(self.h2_total_label)
+        self.h2_rate_label = CaptionLabel("Rate: 0.0000 L/min")
+        self.h2_rate_label.setStyleSheet("color: #3b82f6;")
+        h2_inner.addWidget(self.h2_rate_label)
+        gas_grid.addWidget(h2_frame, 0, 0)
+        
+        # O2 Stats
+        o2_frame = QFrame()
+        o2_frame.setStyleSheet("""
+            QFrame {
+                background: #dcfce7;
+                border-radius: 8px;
+            }
+        """)
+        o2_inner = QVBoxLayout(o2_frame)
+        o2_inner.setContentsMargins(16, 12, 16, 12)
+        o2_inner.setSpacing(4)
+        o2_icon = SubtitleLabel("O₂")
+        o2_icon.setStyleSheet("color: #166534; font-size: 13px; font-weight: 600;")
+        o2_inner.addWidget(o2_icon)
+        self.o2_total_label = SubtitleLabel("0.0000 L")
+        self.o2_total_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #16a34a;")
+        o2_inner.addWidget(self.o2_total_label)
+        self.o2_rate_label = CaptionLabel("Rate: 0.0000 L/min")
+        self.o2_rate_label.setStyleSheet("color: #22c55e;")
+        o2_inner.addWidget(self.o2_rate_label)
+        gas_grid.addWidget(o2_frame, 0, 1)
+        
+        gas_layout.addLayout(gas_grid)
+        bottom_row.addWidget(gas_card, stretch=1)
+        
+        # Electrode Details Card
+        electrode_card = CardWidget()
+        electrode_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
+        electrode_layout = QVBoxLayout(electrode_card)
+        electrode_layout.setContentsMargins(20, 18, 20, 18)
+        electrode_layout.setSpacing(12)
+        
+        electrode_header = StrongBodyLabel("Electrode Details")
+        electrode_header.setStyleSheet("background: transparent;")
+        electrode_layout.addWidget(electrode_header)
+        
+        # Electrode grid
+        self.electrode_grid = QGridLayout()
+        self.electrode_grid.setSpacing(8)
+        
+        self.electrode_labels = []
+        for i in range(9):
+            row, col = i // 3, i % 3
+            label = BodyLabel(f"E{i+1}: 0.00 mA")
+            label.setStyleSheet(f"""
+                padding: 8px 12px;
+                border-radius: 6px;
+                font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+                font-size: 12px;
+                color: rgb({self.colors[i][0]}, {self.colors[i][1]}, {self.colors[i][2]});
+            """)
+            self.electrode_labels.append(label)
+            self.electrode_grid.addWidget(label, row, col)
+        
+        electrode_layout.addLayout(self.electrode_grid)
+        electrode_layout.addStretch()
+        
+        bottom_row.addWidget(electrode_card, stretch=1)
+        
+        heatmap_main.addLayout(bottom_row, stretch=1)
+        
+        self.stack.addWidget(heatmap_view)
+        
+        self.mainLayout.addWidget(self.stack, stretch=1)
+        
+        # Connect pivot to stacked widget
+        self.stack.setCurrentWidget(chart_view)
+        self.pivot.currentItemChanged.connect(
+            lambda routeKey: self.stack.setCurrentWidget(self.stack.findChild(QWidget, routeKey))
+        )
     
-    def on_mode_changed(self, index):
-        """Handle connection mode change"""
-        is_socket = index == 1
+    # =========================================================================
+    # UI ACTIONS
+    # =========================================================================
+    
+    def _on_pivot_changed(self, routeKey):
+        """Handle pivot navigation"""
+        widget = self.stack.findChild(QWidget, routeKey)
+        if widget:
+            self.stack.setCurrentWidget(widget)
+    
+    def _on_mode_changed(self, routeKey):
+        """Handle connection mode change from signal"""
+        self.connection_mode = routeKey
+        self._update_mode_visibility()
+    
+    def _update_mode_visibility(self):
+        """Update visibility of socket input fields"""
+        is_socket = self.connection_mode == "socket"
         self.ip_label.setVisible(is_socket)
         self.ip_input.setVisible(is_socket)
         self.port_label.setVisible(is_socket)
         self.port_input.setVisible(is_socket)
     
-    def connect_data_source(self):
+    def _toggle_connection(self):
+        """Toggle connection state"""
+        if self.data_reader is None:
+            self._connect()
+        else:
+            self._disconnect()
+    
+    def _connect(self):
         """Connect to data source"""
-        if self.data_reader is not None:
-            return
-        
-        is_socket = self.mode_combo.currentIndex() == 1
+        is_socket = self.connection_mode == "socket"
         
         if is_socket:
             host = self.ip_input.text().strip()
             try:
                 port = int(self.port_input.text().strip())
             except ValueError:
-                InfoBar.error(title="Invalid Port", content="Please enter a valid port number", 
+                InfoBar.error(title="Error", content="Invalid port number",
                              parent=self, position=InfoBarPosition.TOP, duration=3000)
                 return
-            if not host:
-                InfoBar.error(title="Invalid IP", content="Please enter a valid IP address", 
-                             parent=self, position=InfoBarPosition.TOP, duration=3000)
-                return
-            
+            # print("Connecting to socket:", host, port)
             self.data_reader = SocketReaderThread(host=host, port=port)
-            InfoBar.info(title="Connecting...", content=f"Connecting to {host}:{port}", 
-                        parent=self, position=InfoBarPosition.TOP, duration=2000)
         else:
-            serial_port = "/dev/serial0"
-            self.data_reader = SerialReaderThread(port=serial_port, baudrate=115200)
-            InfoBar.info(title="Connecting...", content=f"Opening {serial_port}", 
-                        parent=self, position=InfoBarPosition.TOP, duration=2000)
+            self.data_reader = SerialReaderThread(port="/dev/serial0", baudrate=115200)
         
-        self.data_reader.data_received.connect(self.on_data_received)
-        self.data_reader.connection_status.connect(self.on_connection_status)
+        self.data_reader.data_received.connect(self._on_data_received)
+        self.data_reader.connection_status.connect(self._on_connection_status)
         self.data_reader.start()
         
-        self.connect_btn.setEnabled(False)
-        self.disconnect_btn.setEnabled(True)
-        self.mode_combo.setEnabled(False)
+        self.connect_btn.setText("Stop")
+        self.mode_toggle.setEnabled(False)
         self.ip_input.setEnabled(False)
         self.port_input.setEnabled(False)
+        
+        # Update status
+        self.status_dot.setText("●")
+        self.status_dot.setStyleSheet("color: #f59e0b; font-size: 10px;")
+        self.status_label.setText("Connecting...")
+        self.status_label.setStyleSheet("color: #f59e0b; font-weight: 500;")
     
-    def disconnect_data_source(self):
+    def _disconnect(self):
         """Disconnect from data source"""
         if self.data_reader:
             self.data_reader.stop()
             self.data_reader.wait()
             self.data_reader = None
-            
-            self.status_label.setText("Disconnected")
-            self.status_indicator.setStyleSheet("background-color: #95a5a6; border-radius: 6px;")
-            
-            self.connect_btn.setEnabled(True)
-            self.disconnect_btn.setEnabled(False)
-            self.mode_combo.setEnabled(True)
-            self.ip_input.setEnabled(True)
-            self.port_input.setEnabled(True)
-            
-            InfoBar.success(title="Disconnected", content="Connection closed successfully", 
-                           parent=self, position=InfoBarPosition.TOP, duration=2000)
+        
+        self.connect_btn.setText("Connect")
+        self.mode_toggle.setEnabled(True)
+        self.ip_input.setEnabled(True)
+        self.port_input.setEnabled(True)
+        
+        self.status_dot.setText("●")
+        self.status_dot.setStyleSheet("color: #9ca3af; font-size: 10px;")
+        self.status_label.setText("Disconnected")
+        self.status_label.setStyleSheet("color: #6b7280; font-weight: 500;")
     
-    def on_data_received(self, data):
+    def _on_connection_status(self, status):
+        """Handle connection status update"""
+        if "Connected" in status:
+            self.status_dot.setText("●")
+            self.status_dot.setStyleSheet("color: #22c55e; font-size: 10px;")
+            self.status_label.setText("Connected")
+            self.status_label.setStyleSheet("color: #16a34a; font-weight: 500;")
+            InfoBar.success(title="Connected", content=status,
+                           parent=self, position=InfoBarPosition.TOP, duration=2000)
+        elif "Error" in status or "Disconnected" in status:
+            self.status_dot.setText("●")
+            self.status_dot.setStyleSheet("color: #ef4444; font-size: 10px;")
+            self.status_label.setText("Error")
+            self.status_label.setStyleSheet("color: #dc2626; font-weight: 500;")
+            InfoBar.error(title="Connection Error", content=status,
+                         parent=self, position=InfoBarPosition.TOP, duration=4000)
+    
+    def _on_data_received(self, data):
         """Handle received data"""
-        # Format log message
-        if 'currents' in data and data['currents']:
-            pico_time = data.get('pico_time', 0)
-            voltage = data.get('voltage', 0)
-            avg_i = sum(data['currents']) / len(data['currents'])
-            cycle_us = data.get('cycle_us', 0)
-            message = f"[{data['timestamp']}] Avg I: {avg_i:.4f}A | V: {voltage:.3f}V | Cycle: {cycle_us}us"
-        else:
-            message = f"[{data['timestamp']}] {data.get('raw', 'No data')}"
+        currents = data.get('currents', [0.0] * 9)
+        voltage = data.get('voltage', 0.0)
+        pico_time = data.get('pico_time', 0)
         
-        self.data_display.append(message)
-        
-        # Limit log size
-        if self.data_display.document().blockCount() > 500:
-            cursor = self.data_display.textCursor()
+        # Update log
+        avg_i = sum(currents) / len(currents) if currents else 0
+        log_msg = f"[{data['timestamp']}] Avg: {avg_i*1000:.2f}mA | V: {voltage:.3f}V"
+        self.log_text.append(log_msg)
+        if self.log_text.document().blockCount() > 200:
+            cursor = self.log_text.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.Start)
-            cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor, 100)
+            cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor, 50)
             cursor.removeSelectedText()
         
-        # Update chart data
-        if 'currents' in data:
-            for i in range(self.num_sensors):
-                if i < len(data['currents']):
-                    self.current_data[i].append(data['currents'][i])
-                    if len(self.current_data[i]) > self.max_points:
-                        self.current_data[i].pop(0)
+        # Update sensor cards
+        total_current = 0
+        current_ma = []
+        for i, current in enumerate(currents[:9]):
+            ma_val = current * 1000
+            current_ma.append(ma_val)
+            self.sensor_cards[i].setValue(ma_val)
+            self.electrode_labels[i].setText(f"E{i+1}: {ma_val:.2f} mA")
+            total_current += ma_val
         
-        # Store voltage (single value, not 9 separate)
-        if 'voltage' in data:
-            # Store single voltage value in voltage_data[0]
-            self.voltage_data[0].append(data['voltage'])
-            if len(self.voltage_data[0]) > self.max_points:
-                self.voltage_data[0].pop(0)
+        # Update voltage card (index 9)
+        self.sensor_cards[9].setValue(voltage)
         
-        # Update curves
+        # Update sample count
+        self.sample_count += 1
+        
+        # Store data
         for i in range(self.num_sensors):
-            if self.current_data[i]:
+            if i < len(currents):
+                self.current_data[i].append(currents[i])
+                self.time_data[i].append(pico_time / 1e6)
+                if len(self.current_data[i]) > self.max_points:
+                    self.current_data[i].pop(0)
+                    self.time_data[i].pop(0)
+        
+        # Update chart
+        for i in range(self.num_sensors):
+            if self.current_data[i] and self.sensor_visible[i]:
                 x = [j / 100 for j in range(len(self.current_data[i]))]
                 self.current_curves[i].setData(x, self.current_data[i])
+        
+        # Update heatmaps
+        self.current_heatmap.setValues(current_ma, "mA", 2)
+        
+        # Update gas production every N samples
+        if self.sample_count % self.gas_update_interval == 0:
+            self._update_gas_production()
     
-    def on_connection_status(self, status):
-        """Handle connection status"""
-        if "Connected" in status:
-            self.status_label.setText("Connected")
-            self.status_indicator.setStyleSheet("background-color: #27ae60; border-radius: 6px;")
-            InfoBar.success(title="Connected!", content=status, 
-                           parent=self, position=InfoBarPosition.TOP, duration=3000)
-        elif "Error" in status:
-            self.status_label.setText("Error")
-            self.status_indicator.setStyleSheet("background-color: #e74c3c; border-radius: 6px;")
-            InfoBar.error(title="Connection Error", content=status, 
-                         parent=self, position=InfoBarPosition.TOP, duration=5000)
-        else:
-            self.status_label.setText(status[:20] + "..." if len(status) > 20 else status)
-            self.status_indicator.setStyleSheet("background-color: #f39c12; border-radius: 6px;")
+    def _update_gas_production(self):
+        """Calculate gas production using Faraday's law"""
+        current_time = datetime.now()
+        
+        for i in range(self.num_sensors):
+            if len(self.current_data[i]) >= 2:
+                currents = np.array(self.current_data[i][-self.gas_update_interval:])
+                times = np.array(self.time_data[i][-self.gas_update_interval:])
+                
+                if len(currents) >= 2:
+                    dt = np.diff(times)
+                    i_mid = 0.5 * (currents[1:] + currents[:-1])
+                    Q = np.sum(i_mid * dt)
+                    
+                    self.h2_production[i] += (Q / (2 * FARADAY)) * MOLAR_VOLUME_STP
+                    self.o2_production[i] += (Q / (4 * FARADAY)) * MOLAR_VOLUME_STP
+        
+        h2_total = sum(self.h2_production)
+        o2_total = sum(self.o2_production)
+        
+        # Calculate rates
+        h2_rate, o2_rate = 0, 0
+        if self.last_gas_time:
+            elapsed = (current_time - self.last_gas_time).total_seconds() / 60
+            if elapsed > 0:
+                h2_rate = h2_total / max(elapsed, 0.001)
+                o2_rate = o2_total / max(elapsed, 0.001)
+        
+        # Update heatmaps
+        self.h2_heatmap.setValues(self.h2_production, "L", 4)
+        self.o2_heatmap.setValues(self.o2_production, "L", 4)
+        
+        # Update summary labels
+        self.h2_total_label.setText(f"{h2_total:.4f} L")
+        self.h2_rate_label.setText(f"Rate: {h2_rate:.4f} L/min")
+        self.o2_total_label.setText(f"{o2_total:.4f} L")
+        self.o2_rate_label.setText(f"Rate: {o2_rate:.4f} L/min")
+        
+        self.last_gas_time = current_time
     
-    def toggle_sensor(self, idx, state):
+    def _toggle_sensor(self, idx):
         """Toggle sensor visibility"""
-        visible = state == Qt.Checked.value if hasattr(Qt.Checked, 'value') else state == 2
-        self.current_curves[idx].setVisible(visible)
+        self.sensor_visible[idx] = not self.sensor_visible[idx]
+        if idx < self.num_sensors:  # Only toggle curve for current sensors (not voltage)
+            self.current_curves[idx].setVisible(self.sensor_visible[idx])
+        self.sensor_cards[idx].setActive(self.sensor_visible[idx])
     
-    def select_all_sensors(self):
-        for cb in self.sensor_checkboxes:
-            cb.setChecked(True)
+    def _toggle_all_sensors(self):
+        """Toggle all sensors visibility"""
+        all_visible = all(self.sensor_visible)
+        for i in range(10):  # 9 electrodes + 1 voltage
+            self.sensor_visible[i] = not all_visible
+            if i < self.num_sensors:  # Only toggle curves for current sensors
+                self.current_curves[i].setVisible(self.sensor_visible[i])
+            self.sensor_cards[i].setActive(self.sensor_visible[i])
     
-    def deselect_all_sensors(self):
-        for cb in self.sensor_checkboxes:
-            cb.setChecked(False)
-    
-    def clear_data(self):
+    def _clear_data(self):
         """Clear all data"""
-        self.data_display.clear()
+        self.log_text.clear()
         for i in range(self.num_sensors):
             self.current_data[i].clear()
-            self.voltage_data[i].clear()
+            self.time_data[i].clear()
             self.current_curves[i].setData([], [])
-        InfoBar.info(title="Cleared", content="All data has been cleared", 
+        
+        self._reset_gas_production()
+        
+        for card in self.sensor_cards:
+            card.setValue(0)
+        
+        self.current_heatmap.setValues([0]*9, "mA", 2)
+        
+        InfoBar.info(title="Cleared", content="All data cleared",
                     parent=self, position=InfoBarPosition.TOP, duration=2000)
     
-    def export_chart(self):
+    def _reset_gas_production(self):
+        """Reset gas production"""
+        self.h2_production = [0.0] * self.num_sensors
+        self.o2_production = [0.0] * self.num_sensors
+        self.sample_count = 0
+        self.last_gas_time = None
+        
+        self.h2_heatmap.setValues([0]*9, "L", 4)
+        self.o2_heatmap.setValues([0]*9, "L", 4)
+        self.h2_total_label.setText("0.0000 L")
+        self.h2_rate_label.setText("Rate: 0.0000 L/min")
+        self.o2_total_label.setText("0.0000 L")
+        self.o2_rate_label.setText("Rate: 0.0000 L/min")
+        
+        InfoBar.info(title="Reset", content="Gas calculations reset",
+                    parent=self, position=InfoBarPosition.TOP, duration=2000)
+    
+    def _export_chart(self):
         """Export chart as PNG"""
         try:
-            exporter = pg.exporters.ImageExporter(self.plot_widget.plotItem)
-            filename = f"monitoring_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            default_name = f"monitoring_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Chart",
+                default_name,
+                "PNG Image (*.png);;All Files (*)"
+            )
+            if not filename:
+                return  # User cancelled
+            
+            exporter = ImageExporter(self.plot_widget.plotItem)
+            # Set high resolution export (3x scale for better quality)
+            exporter.parameters()['width'] = int(self.plot_widget.width() * 3)
+            exporter.parameters()['height'] = int(self.plot_widget.height() * 3)
+            exporter.parameters()['antialias'] = True
             exporter.export(filename)
-            InfoBar.success(title="Exported", content=f"Chart saved as {filename}", 
+            InfoBar.success(title="Exported", content=f"Saved as {filename}",
                            parent=self, position=InfoBarPosition.TOP, duration=3000)
         except Exception as e:
-            InfoBar.error(title="Export Failed", content=str(e), 
+            InfoBar.error(title="Export Failed", content=str(e),
+                         parent=self, position=InfoBarPosition.TOP, duration=3000)
+    
+    def _export_heatmaps(self):
+        """Export all heatmaps as PNG images"""
+        try:
+            folder = QFileDialog.getExistingDirectory(
+                self,
+                "Select Folder to Save Heatmaps",
+                ""
+            )
+            if not folder:
+                return  # User cancelled
+            
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            heatmaps = [
+                (self.current_heatmap.plot_widget, "current"),
+                (self.h2_heatmap.plot_widget, "h2_production"),
+                (self.o2_heatmap.plot_widget, "o2_production"),
+            ]
+            
+            exported_count = 0
+            for plot_widget, name in heatmaps:
+                exporter = ImageExporter(plot_widget.plotItem)
+                exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                exporter.parameters()['antialias'] = True
+                filename = os.path.join(folder, f"heatmap_{name}_{timestamp}.png")
+                exporter.export(filename)
+                exported_count += 1
+            
+            InfoBar.success(title="Exported", content=f"Saved {exported_count} heatmaps to {folder}",
+                           parent=self, position=InfoBarPosition.TOP, duration=3000)
+        except Exception as e:
+            InfoBar.error(title="Export Failed", content=str(e),
                          parent=self, position=InfoBarPosition.TOP, duration=3000)

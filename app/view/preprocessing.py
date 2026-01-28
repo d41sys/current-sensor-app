@@ -15,6 +15,7 @@ from qfluentwidgets import (ScrollArea, PushButton, ComboBox, PrimaryPushButton,
                             TabWidget, FluentIcon, PrimaryDropDownPushButton, 
                             RoundMenu, Action, DropDownPushButton)
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
 
 # Import visualization functions
 from visualization import (load_signals_from_folder, get_temporal_windows, 
@@ -40,6 +41,9 @@ class VisualizationPopup(QDialog):
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
         
+        # Set background color
+        self.setStyleSheet("QDialog { background-color: #f8fafc; }")
+        
         self.__initUI()
         self.__applyFilters()
     
@@ -51,6 +55,7 @@ class VisualizationPopup(QDialog):
         
         # === Filter Controls Section ===
         filter_card = CardWidget(self)
+        filter_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
         filter_layout = QHBoxLayout(filter_card)
         
         filter_layout.addWidget(StrongBodyLabel("Filter Settings:"))
@@ -95,6 +100,15 @@ class VisualizationPopup(QDialog):
         self.export_btn = DropDownPushButton(FluentIcon.SHARE, 'Export Data')
         self.export_btn.setMenu(self.export_menu)
         filter_layout.addWidget(self.export_btn)
+        
+        # Export Charts Button
+        self.export_charts_menu = RoundMenu(parent=self)
+        self.export_charts_menu.addAction(Action(FluentIcon.PHOTO, 'Export Current Tab Chart', triggered=self.__exportCurrentTabChart))
+        self.export_charts_menu.addAction(Action(FluentIcon.ALBUM, 'Export All Charts', triggered=self.__exportAllCharts))
+        
+        self.export_charts_btn = DropDownPushButton(FluentIcon.SAVE, 'Export Charts')
+        self.export_charts_btn.setMenu(self.export_charts_menu)
+        filter_layout.addWidget(self.export_charts_btn)
         
         main_layout.addWidget(filter_card)
         
@@ -635,6 +649,168 @@ class VisualizationPopup(QDialog):
                     position=InfoBarPosition.TOP,
                     duration=5000
                 )
+    
+    def __exportCurrentTabChart(self):
+        """Export the current tab's charts as PNG"""
+        try:
+            current_index = self.tab_widget.currentIndex()
+            tab_names = ['signals', 'h2_production', 'o2_production', 'heatmaps', 'statistics']
+            tab_name = tab_names[current_index] if current_index < len(tab_names) else 'chart'
+            
+            folder = QFileDialog.getExistingDirectory(
+                self,
+                "Select Folder to Save Charts",
+                ""
+            )
+            if not folder:
+                return
+            
+            timestamp = f"window{self.window_index}_{tab_name}"
+            exported_count = 0
+            
+            if current_index == 0:  # Signals tab - 9 plots
+                for i, plot_widget in enumerate(self.signal_plots):
+                    exporter = ImageExporter(plot_widget.plotItem)
+                    exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                    exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                    exporter.parameters()['antialias'] = True
+                    filename = os.path.join(folder, f"signal_seg{i+1}_{timestamp}.png")
+                    exporter.export(filename)
+                    exported_count += 1
+            elif current_index == 1:  # H2 tab
+                for plot_widget, name in [(self.h2_plot, "h2_cumulative"), (self.h2_bar_plot, "h2_bar")]:
+                    exporter = ImageExporter(plot_widget.plotItem)
+                    exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                    exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                    exporter.parameters()['antialias'] = True
+                    filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                    exporter.export(filename)
+                    exported_count += 1
+            elif current_index == 2:  # O2 tab
+                for plot_widget, name in [(self.o2_plot, "o2_cumulative"), (self.o2_bar_plot, "o2_bar")]:
+                    exporter = ImageExporter(plot_widget.plotItem)
+                    exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                    exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                    exporter.parameters()['antialias'] = True
+                    filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                    exporter.export(filename)
+                    exported_count += 1
+            elif current_index == 3:  # Heatmap tab
+                for plot_widget, name in [(self.h2_heatmap, "heatmap_h2"), (self.o2_heatmap, "heatmap_o2"),
+                                           (self.current_heatmap, "heatmap_current"), (self.var_heatmap, "heatmap_variance")]:
+                    exporter = ImageExporter(plot_widget.plotItem)
+                    exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                    exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                    exporter.parameters()['antialias'] = True
+                    filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                    exporter.export(filename)
+                    exported_count += 1
+            elif current_index == 4:  # Statistics tab
+                for plot_widget, name in [(self.mean_bar_plot, "mean_bar"), (self.var_bar_plot, "variance_bar")]:
+                    exporter = ImageExporter(plot_widget.plotItem)
+                    exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                    exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                    exporter.parameters()['antialias'] = True
+                    filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                    exporter.export(filename)
+                    exported_count += 1
+            
+            InfoBar.success(
+                title="Export Complete",
+                content=f"Saved {exported_count} charts to {os.path.basename(folder)}",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=3000
+            )
+        except Exception as e:
+            InfoBar.error(
+                title="Export Error",
+                content=str(e),
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=5000
+            )
+    
+    def __exportAllCharts(self):
+        """Export all charts from all tabs as PNG"""
+        try:
+            folder = QFileDialog.getExistingDirectory(
+                self,
+                "Select Folder to Save All Charts",
+                ""
+            )
+            if not folder:
+                return
+            
+            timestamp = f"window{self.window_index}"
+            exported_count = 0
+            
+            # Signal plots (9)
+            for i, plot_widget in enumerate(self.signal_plots):
+                exporter = ImageExporter(plot_widget.plotItem)
+                exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                exporter.parameters()['antialias'] = True
+                filename = os.path.join(folder, f"signal_seg{i+1}_{timestamp}.png")
+                exporter.export(filename)
+                exported_count += 1
+            
+            # H2 plots
+            for plot_widget, name in [(self.h2_plot, "h2_cumulative"), (self.h2_bar_plot, "h2_bar")]:
+                exporter = ImageExporter(plot_widget.plotItem)
+                exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                exporter.parameters()['antialias'] = True
+                filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                exporter.export(filename)
+                exported_count += 1
+            
+            # O2 plots
+            for plot_widget, name in [(self.o2_plot, "o2_cumulative"), (self.o2_bar_plot, "o2_bar")]:
+                exporter = ImageExporter(plot_widget.plotItem)
+                exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                exporter.parameters()['antialias'] = True
+                filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                exporter.export(filename)
+                exported_count += 1
+            
+            # Heatmaps
+            for plot_widget, name in [(self.h2_heatmap, "heatmap_h2"), (self.o2_heatmap, "heatmap_o2"),
+                                       (self.current_heatmap, "heatmap_current"), (self.var_heatmap, "heatmap_variance")]:
+                exporter = ImageExporter(plot_widget.plotItem)
+                exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                exporter.parameters()['antialias'] = True
+                filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                exporter.export(filename)
+                exported_count += 1
+            
+            # Statistics bar charts
+            for plot_widget, name in [(self.mean_bar_plot, "mean_bar"), (self.var_bar_plot, "variance_bar")]:
+                exporter = ImageExporter(plot_widget.plotItem)
+                exporter.parameters()['width'] = int(plot_widget.width() * 3)
+                exporter.parameters()['height'] = int(plot_widget.height() * 3)
+                exporter.parameters()['antialias'] = True
+                filename = os.path.join(folder, f"{name}_{timestamp}.png")
+                exporter.export(filename)
+                exported_count += 1
+            
+            InfoBar.success(
+                title="Export Complete",
+                content=f"Saved {exported_count} charts to {os.path.basename(folder)}",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=3000
+            )
+        except Exception as e:
+            InfoBar.error(
+                title="Export Error",
+                content=str(e),
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=5000
+            )
 
 
 class PreprocessingInterface(ScrollArea):
@@ -651,18 +827,33 @@ class PreprocessingInterface(ScrollArea):
         self.popup_windows = []  # Keep track of open popup windows
         
         self.view = QWidget(self)
+        self.view.setObjectName('preprocessingView')
+        self.setStyleSheet("""
+            ScrollArea {
+                background: transparent;
+                border: none;
+                border-top-left-radius: 10px;
+            }
+            #preprocessingView {
+                background: transparent;
+                border-top-left-radius: 10px;
+            }
+        """)
         self.vBoxLayout = QVBoxLayout(self.view)
         self.vBoxLayout.setSpacing(15)
         self.vBoxLayout.setContentsMargins(20, 20, 20, 20)
         
         self.__initWidget()
+        
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
     
     def __initWidget(self):
         """Initialize widgets"""
-        self.view.setObjectName('view')
         
         # === File Upload Section ===
         self.file_card = CardWidget(self.view)
+        self.file_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
         file_layout = QVBoxLayout(self.file_card)
         file_layout.setSpacing(12)
         
@@ -695,6 +886,7 @@ class PreprocessingInterface(ScrollArea):
         
         # === Data Preview Section ===
         self.preview_card = CardWidget(self.view)
+        self.preview_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
         preview_layout = QVBoxLayout(self.preview_card)
         
         # Header row with controls
@@ -706,7 +898,7 @@ class PreprocessingInterface(ScrollArea):
         preview_header_row.addWidget(BodyLabel("View:"))
         self.preview_mode_combo = ComboBox()
         self.preview_mode_combo.addItems(["All Columns (Combined)", "Single Segment"])
-        self.preview_mode_combo.setFixedWidth(180)
+        self.preview_mode_combo.setFixedWidth(250)
         self.preview_mode_combo.currentIndexChanged.connect(self._on_preview_mode_changed)
         preview_header_row.addWidget(self.preview_mode_combo)
         
@@ -735,6 +927,7 @@ class PreprocessingInterface(ScrollArea):
         
         # === Window Settings Section ===
         self.window_card = CardWidget(self.view)
+        self.window_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
         window_layout = QVBoxLayout(self.window_card)
         
         window_header = StrongBodyLabel("3. Window Settings")
@@ -772,6 +965,7 @@ class PreprocessingInterface(ScrollArea):
         
         # === Window Selection & Visualization Section ===
         self.viz_card = CardWidget(self.view)
+        self.viz_card.setStyleSheet("CardWidget { border: 1px solid #dcdcdc; border-radius: 6px; }")
         viz_layout = QVBoxLayout(self.viz_card)
         
         viz_header = StrongBodyLabel("4. Open Visualization Window")
@@ -807,9 +1001,6 @@ class PreprocessingInterface(ScrollArea):
         self.vBoxLayout.addWidget(self.viz_card)
         
         self.vBoxLayout.addStretch()
-        
-        self.setWidget(self.view)
-        self.setWidgetResizable(True)
     
     def _select_folder(self):
         """Open folder dialog to select folder with 9 CSV files"""

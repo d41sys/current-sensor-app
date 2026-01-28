@@ -158,7 +158,7 @@ class MainWindow(FluentWindow):
 
     def switchToSample(self, routeKey, index):
         """ switch to sample """
-        interfaces = self.findChildren(GalleryInterface)
+        interfaces = self.findChildren(USBDataInterface)
         for w in interfaces:
             if w.objectName() == routeKey:
                 self.stackedWidget.setCurrentWidget(w, False)
