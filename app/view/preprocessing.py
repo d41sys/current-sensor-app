@@ -252,10 +252,10 @@ class VisualizationPopup(QDialog):
         current_layout.addWidget(self.current_heatmap)
         layout.addWidget(current_container, 1, 0)
         
-        # Variance Heatmap
+        # Std Heatmap
         var_container = QWidget()
         var_layout = QVBoxLayout(var_container)
-        var_layout.addWidget(StrongBodyLabel("Current Variance Heatmap (3×3)"))
+        var_layout.addWidget(StrongBodyLabel("Current Std Heatmap (3×3)"))
         
         self.var_heatmap = pg.PlotWidget()
         self.var_heatmap.setBackground('w')
@@ -427,19 +427,19 @@ class VisualizationPopup(QDialog):
         h2_totals = [self.h2_data[i][1][-1] if len(self.h2_data[i][1]) > 0 else 0 for i in range(9)]
         o2_totals = [self.o2_data[i][1][-1] if len(self.o2_data[i][1]) > 0 else 0 for i in range(9)]
         mean_currents = [self.stats[i][0] for i in range(9)]
-        var_currents = [self.stats[i][1]**2 for i in range(9)]
+        std_currents = [self.stats[i][1] for i in range(9)]
         
         # Create 3x3 matrices
         h2_matrix = np.array(h2_totals).reshape(3, 3)
         o2_matrix = np.array(o2_totals).reshape(3, 3)
         current_matrix = np.array(mean_currents).reshape(3, 3)
-        var_matrix = np.array(var_currents).reshape(3, 3)
+        std_matrix = np.array(std_currents).reshape(3, 3)
         
         # Update heatmaps
         self.__drawHeatmap(self.h2_heatmap, h2_matrix, 'hot')
         self.__drawHeatmap(self.o2_heatmap, o2_matrix, 'hot')
         self.__drawHeatmap(self.current_heatmap, current_matrix, 'viridis')
-        self.__drawHeatmap(self.var_heatmap, var_matrix, 'plasma')
+        self.__drawHeatmap(self.var_heatmap, std_matrix, 'plasma')
     
     def __drawHeatmap(self, plot_widget, data, colormap='hot'):
         """Draw a heatmap on a plot widget"""
@@ -940,7 +940,7 @@ class PreprocessingInterface(ScrollArea):
         col_win.addWidget(BodyLabel("Window Length (s):"))
         self.window_length_spin = SpinBox()
         self.window_length_spin.setRange(1, 600)
-        self.window_length_spin.setValue(60)
+        self.window_length_spin.setValue(60)  # Default value, updated when data is loaded
         col_win.addWidget(self.window_length_spin)
         window_options_layout.addLayout(col_win)
         
@@ -1086,6 +1086,14 @@ class PreprocessingInterface(ScrollArea):
         self.time_mask = []
         self.window_index_spin.setRange(0, 0)
         self.window_info_label.setText("No windows available - Calculate windows first")
+        
+        # Update window length spinbox with total duration of loaded data
+        if self.dfs_raw and len(self.dfs_raw) > 0:
+            df_first = self.dfs_raw[0]
+            if 'time' in df_first.columns and len(df_first) > 0:
+                total_duration = int(df_first['time'].max() - df_first['time'].min())
+                if total_duration > 0:
+                    self.window_length_spin.setValue(min(total_duration, 600))
     
     def upload_folder(self):
         """Select folder containing 9 CSV files (Option A)"""

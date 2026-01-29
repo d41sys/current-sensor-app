@@ -12,7 +12,8 @@ from qfluentwidgets import (ScrollArea, PushButton, ComboBox, PrimaryPushButton,
                             Slider, ProgressRing, IconWidget, SegmentedWidget,
                             SimpleCardWidget, ElevatedCardWidget, FlowLayout,
                             Pivot, SegmentedToggleToolWidget, PillPushButton,
-                            TransparentPushButton, PrimaryToolButton)
+                            TransparentPushButton, PrimaryToolButton, SpinBox,
+                            SwitchButton)
 from qfluentwidgets import FluentIcon as FIF
 import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
@@ -207,6 +208,7 @@ class SocketReaderThread(QThread):
         self.running = False
         if self.socket_connection:
             try:
+                print("Closing socket connection...")
                 self.socket_connection.close()
             except:
                 pass
@@ -428,6 +430,11 @@ class USBDataInterface(ScrollArea):
         self.sample_count = 0
         self.gas_update_interval = 100
         self.last_gas_time = None
+        
+        # Heatmap averaging mode
+        self.use_average_mode = False
+        self.current_buffer = [[] for _ in range(self.num_sensors)]  # Buffer for averaging
+        self.average_window = 100  # Number of samples to average
         
         # Sensor colors (9 electrodes + 1 voltage) - Tailwind CSS Colors (600 shades)
         self.colors = [
@@ -678,9 +685,24 @@ class USBDataInterface(ScrollArea):
         # Chart Header
         chart_header = QHBoxLayout()
         chart_title = StrongBodyLabel("Real-time Current Monitor")
-        # chart_title.setStyleSheet("background: transparent;")
         chart_header.addWidget(chart_title)
         chart_header.addStretch()
+        
+        # Window length control
+        window_label = CaptionLabel("Window")
+        window_label.setStyleSheet("color: #6b7280; font-weight: 500;")
+        chart_header.addWidget(window_label)
+        
+        self.window_spin = SpinBox()
+        self.window_spin.setRange(1, 60)
+        self.window_spin.setValue(4)
+        self.window_spin.setSuffix(" sec")
+        self.window_spin.setFixedWidth(150)
+        self.window_spin.setToolTip("Chart window length in seconds")
+        self.window_spin.valueChanged.connect(self._on_window_changed)
+        chart_header.addWidget(self.window_spin)
+        
+        chart_header.addSpacing(16)
         
         self.clear_btn = TransparentToolButton(FIF.DELETE)
         self.clear_btn.setToolTip("Clear Data")
@@ -810,11 +832,27 @@ class USBDataInterface(ScrollArea):
         heatmap_main.setContentsMargins(20, 20, 20, 20)
         heatmap_main.setSpacing(16)
         
-        # Heatmap header with export button
+        # Heatmap header with export button and average mode switch
         heatmap_header = QHBoxLayout()
         heatmap_title = StrongBodyLabel("Electrode Heatmaps")
         heatmap_header.addWidget(heatmap_title)
         heatmap_header.addStretch()
+        
+        # Average mode switch
+        avg_label = CaptionLabel("Instant")
+        avg_label.setStyleSheet("color: #6b7280; font-weight: 500;")
+        heatmap_header.addWidget(avg_label)
+        
+        self.avg_switch = SwitchButton()
+        self.avg_switch.setToolTip("Toggle between instant values and 100-sample average")
+        self.avg_switch.checkedChanged.connect(self._on_average_mode_changed)
+        heatmap_header.addWidget(self.avg_switch)
+        
+        self.avg_mode_label = CaptionLabel("Avg (100)")
+        self.avg_mode_label.setStyleSheet("color: #9ca3af; font-weight: 500;")
+        heatmap_header.addWidget(self.avg_mode_label)
+        
+        heatmap_header.addSpacing(16)
         
         self.export_heatmap_btn = TransparentToolButton(FIF.SAVE)
         self.export_heatmap_btn.setToolTip("Export Heatmaps")
@@ -1001,6 +1039,27 @@ class USBDataInterface(ScrollArea):
         self.connection_mode = routeKey
         self._update_mode_visibility()
     
+    def _on_window_changed(self, value):
+        """Handle window length change"""
+        # 100 samples per second, so multiply by 100
+        self.max_points = value * 100
+        # Clear existing data to apply new window
+        for i in range(self.num_sensors):
+            while len(self.current_data[i]) > self.max_points:
+                self.current_data[i].pop(0)
+                self.time_data[i].pop(0)
+    
+    def _on_average_mode_changed(self, checked):
+        """Handle average mode toggle"""
+        self.use_average_mode = checked
+        # Update label styling to show active state
+        if checked:
+            self.avg_mode_label.setStyleSheet("color: #0f172a; font-weight: 600;")
+        else:
+            self.avg_mode_label.setStyleSheet("color: #9ca3af; font-weight: 500;")
+        # Clear buffer when switching modes
+        self.current_buffer = [[] for _ in range(self.num_sensors)]
+    
     def _update_mode_visibility(self):
         """Update visibility of socket input fields"""
         is_socket = self.connection_mode == "socket"
@@ -1051,11 +1110,35 @@ class USBDataInterface(ScrollArea):
     def _disconnect(self):
         """Disconnect from data source"""
         if self.data_reader:
+            # Show disconnecting status immediately
+            self.status_dot.setText("●")
+            self.status_dot.setStyleSheet("color: #f59e0b; font-size: 10px;")
+            self.status_label.setText("Disconnecting...")
+            self.status_label.setStyleSheet("color: #f59e0b; font-weight: 500;")
+            self.connect_btn.setEnabled(False)
+            
+            # Stop the reader
             self.data_reader.stop()
-            self.data_reader.wait()
+            
+            # Use a timer to wait for thread without blocking UI
+            self._disconnect_timer = QTimer()
+            self._disconnect_timer.setSingleShot(True)
+            self._disconnect_timer.timeout.connect(self._finish_disconnect)
+            self._disconnect_timer.start(100)  # Check every 100ms
+        else:
+            self._finish_disconnect()
+    
+    def _finish_disconnect(self):
+        """Finish the disconnect process after thread stops"""
+        if self.data_reader:
+            if self.data_reader.isRunning():
+                # Still running, check again later
+                self._disconnect_timer.start(100)
+                return
             self.data_reader = None
         
         self.connect_btn.setText("Connect")
+        self.connect_btn.setEnabled(True)
         self.mode_toggle.setEnabled(True)
         self.ip_input.setEnabled(True)
         self.port_input.setEnabled(True)
@@ -1081,6 +1164,17 @@ class USBDataInterface(ScrollArea):
             self.status_label.setStyleSheet("color: #dc2626; font-weight: 500;")
             InfoBar.error(title="Connection Error", content=status,
                          parent=self, position=InfoBarPosition.TOP, duration=4000)
+            
+            # Auto-reset UI when connection fails
+            if self.data_reader:
+                self.data_reader.stop()
+                self.data_reader = None
+            
+            self.connect_btn.setText("Connect")
+            self.connect_btn.setEnabled(True)
+            self.mode_toggle.setEnabled(True)
+            self.ip_input.setEnabled(True)
+            self.port_input.setEnabled(True)
     
     def _on_data_received(self, data):
         """Handle received data"""
@@ -1129,8 +1223,23 @@ class USBDataInterface(ScrollArea):
                 x = [j / 100 for j in range(len(self.current_data[i]))]
                 self.current_curves[i].setData(x, self.current_data[i])
         
-        # Update heatmaps
-        self.current_heatmap.setValues(current_ma, "mA", 2)
+        # Update heatmaps with average mode support
+        if self.use_average_mode:
+            # Buffer current values for batch averaging
+            for i in range(self.num_sensors):
+                self.current_buffer[i].append(current_ma[i] if i < len(current_ma) else 0)
+            
+            # Only update heatmap when we have collected 100 packets
+            if len(self.current_buffer[0]) >= self.average_window:
+                # Calculate averages from the batch
+                avg_values = []
+                for i in range(self.num_sensors):
+                    avg_values.append(sum(self.current_buffer[i]) / len(self.current_buffer[i]))
+                self.current_heatmap.setValues(avg_values, "mA", 2)
+                # Clear buffer for next batch
+                self.current_buffer = [[] for _ in range(self.num_sensors)]
+        else:
+            self.current_heatmap.setValues(current_ma, "mA", 2)
         
         # Update gas production every N samples
         if self.sample_count % self.gas_update_interval == 0:
