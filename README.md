@@ -1,21 +1,42 @@
-# Current Sensor Application
+# Electrochemical Current Monitoring System
 
-A real-time USB data monitoring and preprocessing application built with PySide6 and PyQt-Fluent-Widgets, designed for current sensor data acquisition, visualization, and analysis.
+A real-time 9-electrode current monitoring and data preprocessing application built with PySide6 and PyQt-Fluent-Widgets. Designed for electrochemical experiments, water electrolysis research, and multi-channel current sensor data acquisition.
 
 ## Features
 
-- **Real-time USB Data Monitoring**: Capture and visualize voltage and current data from USB devices
-- **Data Preprocessing**: Advanced signal processing with filtering, windowing, and statistical analysis
-- **Interactive Visualization**: Dynamic plots using PyQtGraph and Matplotlib
-- **Fluent Design UI**: Modern, user-friendly interface with PyQt-Fluent-Widgets
-- **Data Export**: Save processed data with timestamps for further analysis
-- **H₂ and O₂ Computation**: Calculate hydrogen and oxygen from current measurements
+### Real-time Monitoring
+- **9-Electrode Current Monitoring**: Real-time visualization of 9 independent current channels with individual sensor cards
+- **Voltage Monitoring**: Simultaneous bus voltage tracking
+- **Dual View Modes**: Line chart for time-series analysis and 3×3 heatmap for spatial visualization
+- **Connection Options**: Support for both Serial (USB) and Socket (TCP) connections
+- **Configurable Window Length**: Adjustable monitoring window from 1-60 seconds
+- **Average Mode**: Toggle between instant readings and 100-sample batch averaging for noise reduction
+- **Gas Production Calculation**: Real-time H₂ and O₂ production estimation using Faraday's law
+- **Data Export**: Export charts and heatmaps as high-resolution PNG images (3x scale)
+
+### Data Preprocessing
+- **Flexible Data Loading**: Load data from folder (9 CSV files) or single combined file (11 columns)
+- **Signal Filtering**: Butterworth filters (low-pass, high-pass, bandpass) with configurable cutoff and order
+- **Temporal Windowing**: Split data into overlapping time windows for segment-by-segment analysis
+- **Multi-Tab Visualization**:
+  - Current Signals (3×3 grid with raw + filtered overlay)
+  - H₂ Production (cumulative line + bar chart)
+  - O₂ Production (cumulative line + bar chart)
+  - Heatmaps (H₂, O₂, Mean Current, Std)
+  - Statistics (summary table + bar charts)
+- **Data Export**: Export as single 11-column file or 9 separate segment files
+
+### UI/UX
+- **Fluent Design**: Modern Microsoft Fluent Design interface with PyQt-Fluent-Widgets
+- **Tailwind CSS Colors**: Consistent color palette (600 shades) for electrode identification
+- **Responsive Layout**: Adaptive grid layouts for different window sizes
+- **Non-blocking Operations**: Smooth disconnect handling with status feedback
 
 ## Prerequisites
 
 - **Python**: 3.8 or higher
 - **Operating System**: Windows, macOS, or Linux
-- **USB Serial Device**: For real-time data acquisition (optional for simulation mode)
+- **Hardware**: USB Serial device or network connection for real-time monitoring
 
 ## Installation
 
@@ -55,20 +76,25 @@ team-assignment-current-meansurement/
 │   │   ├── config.py            # Configuration management
 │   │   ├── icon.py              # Icon definitions
 │   │   ├── translator.py        # Translation utilities
-│   │   └── usb_reader.py        # USB data reader
-│   └── view/                     # UI views
-│       ├── main_window.py       # Main application window
-│       ├── monitoring.py        # Real-time monitoring interface
-│       └── preprocessing.py     # Data preprocessing interface
+│   │   └── usb_reader.py        # USB data reader utilities
+│   ├── view/                     # UI views
+│   │   ├── main_window.py       # Main application window
+│   │   ├── monitoring.py        # Real-time monitoring interface
+│   │   └── preprocessing.py     # Data preprocessing & visualization
+│   ├── download/                 # Download resources
+│   └── resource/                 # Application resources
+│       └── images/              # Image assets
 ├── core/                         # Core framework components
-│   ├── common/                   # Core utilities
-│   ├── components/               # UI components
-│   └── window/                   # Window management
-├── flu_main.py                   # Main entry point (Fluent UI)
-├── main.py                       # Alternative entry point
-├── visualization.py              # Visualization utilities
-├── simulator.py                  # USB data simulator
-├── test.py                       # Testing utilities
+│   ├── common/                   # Core utilities (animation, color, fonts, etc.)
+│   ├── components/               # Reusable UI components
+│   ├── window/                   # Window management
+│   └── _rc/                      # Resource compilation
+├── dataset/                      # Sample datasets
+│   └── *.csv                    # Sample current measurement CSV files
+├── test_data/                    # Test data files
+├── flu_main.py                   # Main entry point
+├── visualization.py              # Visualization & signal processing utilities
+├── simulator.py                  # Data simulator for testing
 ├── requirements.txt              # Project dependencies
 └── README.md                     # This file
 ```
@@ -77,163 +103,181 @@ team-assignment-current-meansurement/
 
 ### Running the Application
 
-#### Main Application (Recommended):
 ```bash
 python flu_main.py
 ```
 
-#### Alternative Entry Point:
+### Data Simulator
+
+For testing without physical hardware, use the simulator:
+
+#### Socket Mode (Recommended for testing):
 ```bash
-python main.py
+python simulator.py socket
+# or with custom host/port
+python simulator.py socket 0.0.0.0 5000
 ```
 
-### USB Data Simulator
-
-For testing without a physical USB device:
-
+#### Serial Mode (requires socat on macOS/Linux):
 ```bash
-python simulator.py
+# Terminal 1: Create virtual serial ports
+socat -d -d pty,raw,echo=0,link=/tmp/pico_virtual pty,raw,echo=0,link=/tmp/pico_host
+
+# Terminal 2: Run simulator
+python simulator.py serial
 ```
 
-This will simulate a USB serial device on a virtual port.
+### Data Format
 
-### Key Features Usage
+The application expects data in the following format:
 
-#### 1. Real-time Monitoring
-- Navigate to the "Monitoring" tab
-- Select your USB device from the dropdown
-- Click "Start" to begin data acquisition
-- View real-time voltage and current plots
+**Serial/Socket Input**: `timestamp,i1,i2,...,i9,vbus,cycle_us`
+- `timestamp`: Microseconds since start
+- `i1-i9`: 9 current readings in mA
+- `vbus`: Bus voltage in V
+- `cycle_us`: Cycle time in microseconds
 
-#### 2. Data Preprocessing
-- Navigate to the "Preprocessing" tab
-- Load saved signal data from a folder
-- Apply filters (Butterworth, etc.)
-- Configure temporal windows
-- Compute statistics and export results
+**CSV File (11 columns)**: `timestamp,i1,i2,...,i9,voltage`
+- First column: Time in seconds
+- Columns 2-10: Current readings (A)
+- Column 11: Voltage (V)
+
+## Key Features Usage
+
+### 1. Real-time Monitoring
+
+1. Navigate to the **Monitoring** tab
+2. Select connection mode: **Serial** or **Socket**
+3. For Serial: Select port and baud rate (default: 115200)
+4. For Socket: Enter host (e.g., `localhost`) and port (e.g., `5000`)
+5. Click **Connect** to start data acquisition
+6. Use **Pivot** tabs to switch between Line Chart and Heatmap views
+7. Adjust **Window Length** (1-60 sec) to change the display window
+8. Toggle **Average Mode** for smoothed heatmap display (averages 100 samples)
+9. Export charts/heatmaps using the export buttons
+
+### 2. Data Preprocessing
+
+1. Navigate to the **Preprocessing** tab
+2. Click **Load Data** and select:
+   - **Load Folder**: 9 separate CSV files (one per electrode)
+   - **Load File**: Single CSV with 11 columns
+3. Preview loaded data in the Data Preview section
+4. Configure **Window Settings**:
+   - Window Length (auto-fills with data duration)
+   - Overlap (for sliding window analysis)
+5. Click **Calculate Windows** to create time windows
+6. Select a window index and click **Open Visualization**
+7. In the visualization popup:
+   - Adjust filter settings (type, cutoff, order)
+   - Click **Apply Filter** to update visualizations
+   - Navigate tabs to view different analyses
+   - Export data or charts as needed
 
 ## Configuration
 
-### USB Device Settings
+### Application Settings
 
-Edit [app/common/config.py](app/common/config.py) to configure:
-- Serial port settings (baud rate, timeout)
-- Data acquisition parameters
-- UI preferences (theme, language)
+Edit `app/common/config.py` to configure:
+- Serial port settings
+- Default connection parameters
+- UI preferences (theme, language, DPI scaling)
 
-### Visualization Settings
+### Signal Processing
 
-Edit [visualization.py](visualization.py) to adjust:
-- Filter parameters
-- Plot styles
-- Statistical computations
+The `visualization.py` module provides:
+- `load_signals_from_folder()`: Load 9 CSV files from a folder
+- `get_temporal_windows()`: Create overlapping time windows
+- `apply_filter_to_df()`: Apply Butterworth filters
+- `compute_stats()`: Calculate mean and standard deviation
+- `compute_h2_from_current()`: Estimate H₂ production via Faraday's law
+- `compute_o2_from_current()`: Estimate O₂ production via Faraday's law
 
 ## Dependencies
 
-### Core Dependencies
-- **PySide6**: Qt framework for Python
-- **PyQt-Fluent-Widgets**: Modern Fluent Design widgets
+### Core UI
+- **PySide6**: Qt6 framework for Python
+- **PySide6-Fluent-Widgets**: Microsoft Fluent Design components
+- **PySideSix-Frameless-Window**: Frameless window support
 
 ### Data Processing
 - **pandas**: Data manipulation and analysis
 - **numpy**: Numerical computing
-- **scipy**: Scientific computing (signal processing)
+- **scipy**: Signal processing (Butterworth filters)
 
 ### Visualization
-- **matplotlib**: Static plotting
-- **pyqtgraph**: Real-time plotting
+- **pyqtgraph**: High-performance real-time plotting
+- **matplotlib**: Static plotting and export
 
 ### Hardware Interface
 - **pyserial**: Serial port communication
 
-### Additional
+### Utilities
 - **Pillow**: Image processing
-- **colorthief**: Color palette extraction
 - **darkdetect**: System theme detection
 
 ## Troubleshooting
 
-### Issue: USB Device Not Detected
+### USB Device Not Detected
 
-**Solution:**
 - Verify the device is connected
-- Check device permissions (especially on Linux/macOS)
-- Try running with elevated privileges
-- Use the simulator for testing
+- Check device permissions (Linux/macOS: add user to `dialout` group)
+- Try the socket mode simulator for testing
 
-### Issue: Import Errors
+### Socket Connection Failed
 
-**Solution:**
+- Ensure the simulator is running first
+- Check firewall settings
+- Verify the host and port are correct
+
+### Import Errors
+
 ```bash
 pip install --upgrade -r requirements.txt
 ```
 
-### Issue: Qt Platform Plugin Error
+### Qt Platform Plugin Error (Linux)
 
-**Solution (Linux):**
 ```bash
-sudo apt-get install libxcb-xinerama0
+sudo apt-get install libxcb-xinerama0 libxcb-cursor0
 ```
 
-**Solution (macOS):**
-```bash
-pip uninstall PySide6
-pip install PySide6
-```
+### Permission Denied on Serial Port
 
-### Issue: Permission Denied on Serial Port (Linux/macOS)
-
-**Solution:**
 ```bash
-# Add user to dialout group (Linux)
+# Linux: Add user to dialout group
 sudo usermod -a -G dialout $USER
+# Log out and back in
 
-# Change port permissions (macOS)
+# macOS: Change port permissions
 sudo chmod 666 /dev/tty.usbserial*
 ```
 
 ## Development
 
-### Running Tests
+### Running with Simulator
+
+For full testing without hardware:
 
 ```bash
-python test.py
-```
+# Terminal 1: Start simulator
+python simulator.py socket
 
-### Building UI Forms
-
-If you modify `.ui` files:
-
-```bash
-pyside6-uic form.ui -o ui_form.py
+# Terminal 2: Run application
+python flu_main.py
+# Connect using Socket mode to localhost:5000
 ```
 
 ### Code Style
 
 - Follow PEP 8 guidelines
 - Use type hints where applicable
-- Document complex functions
+- Document complex functions with docstrings
 
 ## License
 
-[Add your license information here]
-
-## Contributors
-
-[Add contributor information here]
-
-## Support
-
-For issues, questions, or contributions, please [open an issue](https://github.com/your-repo/issues) or contact the development team.
-
-## Changelog
-
-### Version 1.0.0
-- Initial release
-- Real-time USB data monitoring
-- Data preprocessing and visualization
-- Fluent UI design
+This code is support for Team Assignment course at TU/e with VDL
 
 ---
 
-**Note**: This project is under active development. Features and documentation may change.
+**Note**: This project is designed for electrochemical research and current monitoring applications. The 9-electrode configuration is optimized for 3×3 electrode array experiments.
