@@ -420,6 +420,7 @@ class USBDataInterface(ScrollArea):
         # Data structures
         self.num_sensors = 9
         self.voltage_data = []
+        self.voltage_time_data = []  # Time data for voltage
         self.current_data = [[] for _ in range(self.num_sensors)]
         self.time_data = [[] for _ in range(self.num_sensors)]
         self.max_points = 400
@@ -658,9 +659,14 @@ class USBDataInterface(ScrollArea):
         chart_view = QWidget()
         chart_view.setObjectName("chartView")  # For pivot navigation
         # chart_view.setStyleSheet("background: #f8fafa;")
-        chart_main = QHBoxLayout(chart_view)
-        chart_main.setContentsMargins(20, 20, 20, 20)
-        chart_main.setSpacing(16)
+        chart_view_layout = QVBoxLayout(chart_view)
+        chart_view_layout.setContentsMargins(20, 20, 20, 20)
+        chart_view_layout.setSpacing(16)
+        
+        # Use QSplitter for resizable panels
+        chart_main = QSplitter(Qt.Horizontal)
+        chart_main.setHandleWidth(10)  # Hide the splitter handle
+        chart_main.setChildrenCollapsible(False)  # Prevent panels from being collapsed
         
         # Left: Chart + Sensors
         left_panel = QWidget()
@@ -694,7 +700,7 @@ class USBDataInterface(ScrollArea):
         chart_header.addWidget(window_label)
         
         self.window_spin = SpinBox()
-        self.window_spin.setRange(1, 60)
+        self.window_spin.setRange(1, 300)
         self.window_spin.setValue(4)
         self.window_spin.setSuffix(" sec")
         self.window_spin.setFixedWidth(150)
@@ -734,6 +740,10 @@ class USBDataInterface(ScrollArea):
             curve = self.plot_widget.plot(pen=pen, name=f"E{i+1}")
             self.current_curves.append(curve)
         
+        self.current_curves.append(
+            self.plot_widget.plot(pen=pg.mkPen(color=self.colors[9], width=2), name="Voltage")
+        )
+        
         chart_card_layout.addWidget(self.plot_widget)
         left_layout.addWidget(chart_card, stretch=1)
         
@@ -770,8 +780,8 @@ class USBDataInterface(ScrollArea):
         
         # Add voltage card
         self.voltage_card = SensorCard(9, self.colors[9])
-        self.voltage_card.name_label.setText("V")
-        self.voltage_card.unit_label.setText("V")
+        self.voltage_card.name_label.setText("mV")
+        self.voltage_card.unit_label.setText("mV")
         self.voltage_card.sensor_clicked.connect(self._toggle_sensor)
         self.sensor_cards.append(self.voltage_card)
         sensor_grid.addWidget(self.voltage_card)
@@ -779,7 +789,7 @@ class USBDataInterface(ScrollArea):
         sensor_layout.addLayout(sensor_grid)
         left_layout.addWidget(sensor_card)
         
-        chart_main.addWidget(left_panel, stretch=3)
+        chart_main.addWidget(left_panel)
         
         # Right: Log Panel
         right_panel = CardWidget()
@@ -804,6 +814,9 @@ class USBDataInterface(ScrollArea):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setPlaceholderText("Waiting for data...")
+        self.log_text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)  # Disable text wrapping
+        self.log_text.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Hide horizontal scroll
+        self.log_text.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)  # Show vertical only when needed
         self.log_text.setStyleSheet("""
             QTextEdit {
                 font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
@@ -817,10 +830,35 @@ class USBDataInterface(ScrollArea):
             QTextEdit:hover {
                 border: 1px solid #cbd5e1;
             }
+            QScrollBar:vertical {
+                width: 6px;
+                background: transparent;
+                border-radius: 3px;
+                margin: 2px;
+            }
+            QScrollBar::handle:vertical {
+                background: #cbd5e1;
+                border-radius: 3px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #94a3b8;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: transparent;
+            }
         """)
         right_layout.addWidget(self.log_text)
         
-        chart_main.addWidget(right_panel, stretch=1)
+        chart_main.addWidget(right_panel)
+        
+        # Set initial splitter sizes (3:1 ratio)
+        chart_main.setSizes([600, 300])
+        
+        chart_view_layout.addWidget(chart_main)
         
         self.stack.addWidget(chart_view)
         
@@ -1184,7 +1222,7 @@ class USBDataInterface(ScrollArea):
         
         # Update log
         avg_i = sum(currents) / len(currents) if currents else 0
-        log_msg = f"[{data['timestamp']}] Avg: {avg_i*1000:.2f}mA | V: {voltage:.3f}V"
+        log_msg = f"[{data['timestamp']}] Sum: {sum(currents)*1000:.2f}mA | Avg: {avg_i*1000:.2f}mA | V: {voltage:.3f}V"
         self.log_text.append(log_msg)
         if self.log_text.document().blockCount() > 200:
             cursor = self.log_text.textCursor()
@@ -1217,11 +1255,23 @@ class USBDataInterface(ScrollArea):
                     self.current_data[i].pop(0)
                     self.time_data[i].pop(0)
         
+        # Store voltage data
+        self.voltage_data.append(voltage)
+        self.voltage_time_data.append(pico_time / 1e6)
+        if len(self.voltage_data) > self.max_points:
+            self.voltage_data.pop(0)
+            self.voltage_time_data.pop(0)
+        
         # Update chart
         for i in range(self.num_sensors):
             if self.current_data[i] and self.sensor_visible[i]:
                 x = [j / 100 for j in range(len(self.current_data[i]))]
                 self.current_curves[i].setData(x, self.current_data[i])
+        
+        # Update voltage curve
+        if self.voltage_data and self.sensor_visible[9]:
+            x_voltage = [j / 100 for j in range(len(self.voltage_data))]
+            self.current_curves[9].setData(x_voltage, self.voltage_data)
         
         # Update heatmaps with average mode support
         if self.use_average_mode:
@@ -1288,8 +1338,8 @@ class USBDataInterface(ScrollArea):
     def _toggle_sensor(self, idx):
         """Toggle sensor visibility"""
         self.sensor_visible[idx] = not self.sensor_visible[idx]
-        if idx < self.num_sensors:  # Only toggle curve for current sensors (not voltage)
-            self.current_curves[idx].setVisible(self.sensor_visible[idx])
+        # Toggle curve visibility for all sensors including voltage (index 9)
+        self.current_curves[idx].setVisible(self.sensor_visible[idx])
         self.sensor_cards[idx].setActive(self.sensor_visible[idx])
     
     def _toggle_all_sensors(self):
@@ -1297,8 +1347,8 @@ class USBDataInterface(ScrollArea):
         all_visible = all(self.sensor_visible)
         for i in range(10):  # 9 electrodes + 1 voltage
             self.sensor_visible[i] = not all_visible
-            if i < self.num_sensors:  # Only toggle curves for current sensors
-                self.current_curves[i].setVisible(self.sensor_visible[i])
+            # Toggle curves for all sensors including voltage
+            self.current_curves[i].setVisible(self.sensor_visible[i])
             self.sensor_cards[i].setActive(self.sensor_visible[i])
     
     def _clear_data(self):
@@ -1308,6 +1358,11 @@ class USBDataInterface(ScrollArea):
             self.current_data[i].clear()
             self.time_data[i].clear()
             self.current_curves[i].setData([], [])
+        
+        # Clear voltage data
+        self.voltage_data.clear()
+        self.voltage_time_data.clear()
+        self.current_curves[9].setData([], [])  # Clear voltage curve
         
         self._reset_gas_production()
         
