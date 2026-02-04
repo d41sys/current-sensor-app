@@ -71,22 +71,31 @@ class RotatingCSVLogger:
         self.csv_writer = csv.writer(self.current_file)
         
         if is_new:
-            header = ["timestamp"] + [f"i{i}_mA" for i in range(1, 10)] + ["vbus_mV"]
+            # Header: time_s (seconds), 9 currents (mA), voltage (mV)
+            header = ["time_s"] + [f"i{i}_mA" for i in range(1, 10)] + ["vbus_mV"]
             self.csv_writer.writerow(header)
             self.current_file.flush()
         
         self.row_count = 0
     
-    def write_row(self, timestamp: str, currents: list, voltage: float):
-        """Write a data row to the CSV file"""
+    def write_row(self, pico_time: int, currents: list, voltage: float):
+        """Write a data row to the CSV file
+        
+        Args:
+            pico_time: Pico timestamp in microseconds
+            currents: List of 9 current values in Amperes
+            voltage: Voltage value in mV
+        """
         now = time.time()
         if (self.current_file is None) or (self._period_floor(now) != self.period_start):
             self._open_new_file(now)
         
+        # Convert pico_time from microseconds to seconds
+        time_s = pico_time / 1e6
         # Convert currents from A to mA (multiply by 1000)
-        currents_ma = [c*1000 for c in currents[:9]]
+        currents_ma = [c * 1000 for c in currents[:9]]
         # Voltage is already in mV from the raw data
-        row = [timestamp] + currents_ma + [voltage]
+        row = [time_s] + currents_ma + [voltage]
         self.csv_writer.writerow(row)
         self.row_count += 1
         
@@ -1403,9 +1412,9 @@ class USBDataInterface(ScrollArea):
         pico_time = data.get('pico_time', 0)
         timestamp = data.get('timestamp', '')
         
-        # Log to CSV if enabled
+        # Log to CSV if enabled (using pico_time in microseconds for numeric time column)
         if self.csv_logging_enabled and self.csv_logger:
-            self.csv_logger.write_row(timestamp, currents, voltage)
+            self.csv_logger.write_row(pico_time, currents, voltage)
         
         # Update log
         avg_i = sum(currents) / len(currents) if currents else 0
