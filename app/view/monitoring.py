@@ -858,15 +858,23 @@ class USBDataInterface(ScrollArea):
         chart_main.addWidget(right_panel)
         
         # Set stretch factors so right panel can expand (left=1, right=1 means equal priority)
-        chart_main.setStretchFactor(0, 1)  # left panel
-        chart_main.setStretchFactor(1, 1)  # right panel
+        chart_main.setStretchFactor(0, 3)  # left panel gets 3 parts
+        chart_main.setStretchFactor(1, 1)  # right panel gets 1 part
         
         # Set minimum widths to allow proper resizing on all platforms
-        left_panel.setMinimumWidth(900)
-        right_panel.setMinimumWidth(400)
+        left_panel.setMinimumWidth(600)
+        right_panel.setMinimumWidth(200)
         
-        # Set initial splitter sizes (3:1 ratio)
-        # chart_main.setSizes([600, 300])
+        # Get screen width and set initial splitter sizes to 3:1 ratio
+        from PySide6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        if screen:
+            screen_width = screen.availableGeometry().width()
+            # Account for margins and navigation (approx 300px for nav + 40px margins)
+            available_width = screen_width - 340
+            left_width = int(available_width * 3 / 4)
+            right_width = int(available_width * 1 / 4)
+            chart_main.setSizes([left_width, right_width])
         
         chart_view_layout.addWidget(chart_main)
         
