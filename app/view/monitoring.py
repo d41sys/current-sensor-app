@@ -71,13 +71,13 @@ class RotatingCSVLogger:
         self.csv_writer = csv.writer(self.current_file)
         
         if is_new:
-            header = ["timestamp", "t_us"] + [f"i{i}_mA" for i in range(1, 10)] + ["vbus_mV"]
+            header = ["timestamp"] + [f"i{i}_mA" for i in range(1, 10)] + ["vbus_mV"]
             self.csv_writer.writerow(header)
             self.current_file.flush()
         
         self.row_count = 0
     
-    def write_row(self, timestamp: str, pico_time: int, currents: list, voltage: float):
+    def write_row(self, timestamp: str, currents: list, voltage: float):
         """Write a data row to the CSV file"""
         now = time.time()
         if (self.current_file is None) or (self._period_floor(now) != self.period_start):
@@ -86,7 +86,7 @@ class RotatingCSVLogger:
         # Convert currents from A to mA (multiply by 1000)
         currents_ma = [f"{c * 1000:.3f}" for c in currents[:9]]
         # Voltage is already in mV from the raw data
-        row = [timestamp, pico_time] + currents_ma + [f"{voltage:.3f}"]
+        row = [timestamp] + currents_ma + [f"{voltage:.3f}"]
         self.csv_writer.writerow(row)
         self.row_count += 1
         
@@ -1405,7 +1405,7 @@ class USBDataInterface(ScrollArea):
         
         # Log to CSV if enabled
         if self.csv_logging_enabled and self.csv_logger:
-            self.csv_logger.write_row(timestamp, pico_time, currents, voltage)
+            self.csv_logger.write_row(timestamp, currents, voltage)
         
         # Update log
         avg_i = sum(currents) / len(currents) if currents else 0
