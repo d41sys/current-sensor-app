@@ -725,7 +725,7 @@ class USBDataInterface(ScrollArea):
         # PyQtGraph
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('#fafbfa')
-        self.plot_widget.setLabel('left', 'Current (A)', color='#4b5563')
+        self.plot_widget.setLabel('left', 'Current (A)/Voltage (V)', color='#4b5563')
         self.plot_widget.setLabel('bottom', 'Time (s)', color='#4b5563')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.12)
         self.plot_widget.setMinimumHeight(300)
@@ -856,7 +856,7 @@ class USBDataInterface(ScrollArea):
         chart_main.addWidget(right_panel)
         
         # Set initial splitter sizes (3:1 ratio)
-        chart_main.setSizes([600, 300])
+        chart_main.setSizes([900, 450])
         
         chart_view_layout.addWidget(chart_main)
         
