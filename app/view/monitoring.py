@@ -19,14 +19,105 @@ import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
 import sys
 import os
+import csv
+import time
 import platform
 import socket
 import serial
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Constants for gas production calculation (Faraday's law)
 FARADAY = 96485.0          # C/mol
 MOLAR_VOLUME_STP = 22.414  # L/mol at STP
+
+# CSV Logging constants
+DEFAULT_LOG_DIR = os.path.join(os.path.expanduser("~"), "pico_logs")
+ROTATE_SECONDS = 30 * 60  # 30 minutes
+
+
+# ============================================================================
+# ROTATING CSV LOGGER - Logs data to CSV with file rotation
+# ============================================================================
+class RotatingCSVLogger:
+    """CSV logger with automatic file rotation every 30 minutes"""
+    
+    def __init__(self, log_dir: str, rotate_seconds: int = ROTATE_SECONDS):
+        self.log_dir = log_dir
+        self.rotate_seconds = rotate_seconds
+        self.current_path = None
+        self.current_file = None
+        self.csv_writer = None
+        self.period_start = None
+        self.row_count = 0
+        os.makedirs(self.log_dir, exist_ok=True)
+    
+    def _period_floor(self, t: float) -> int:
+        """Get the start of the current rotation period"""
+        return int(t // self.rotate_seconds) * self.rotate_seconds
+    
+    def _open_new_file(self, t: float):
+        """Open a new CSV file for the current period"""
+        if self.current_file:
+            self.current_file.flush()
+            self.current_file.close()
+        
+        self.period_start = self._period_floor(t)
+        dt = datetime.fromtimestamp(self.period_start, tz=timezone.utc)
+        name = dt.strftime("pico_%Y%m%d_%H%M%S_UTC.csv")
+        self.current_path = os.path.join(self.log_dir, name)
+        
+        is_new = not os.path.exists(self.current_path)
+        self.current_file = open(self.current_path, "a", newline="")
+        self.csv_writer = csv.writer(self.current_file)
+        
+        if is_new:
+            header = ["timestamp", "t_us"] + [f"i{i}_mA" for i in range(1, 10)] + ["vbus_mV"]
+            self.csv_writer.writerow(header)
+            self.current_file.flush()
+        
+        self.row_count = 0
+    
+    def write_row(self, timestamp: str, pico_time: int, currents: list, voltage: float):
+        """Write a data row to the CSV file"""
+        now = time.time()
+        if (self.current_file is None) or (self._period_floor(now) != self.period_start):
+            self._open_new_file(now)
+        
+        # Convert currents from A to mA (multiply by 1000)
+        currents_ma = [f"{c * 1000:.3f}" for c in currents[:9]]
+        # Voltage is already in mV from the raw data
+        row = [timestamp, pico_time] + currents_ma + [f"{voltage:.3f}"]
+        self.csv_writer.writerow(row)
+        self.row_count += 1
+        
+        # Flush every 100 rows to balance performance and data safety
+        if self.row_count % 100 == 0:
+            self.current_file.flush()
+    
+    def flush(self):
+        """Flush the current file"""
+        if self.current_file:
+            try:
+                self.current_file.flush()
+            except Exception:
+                pass
+    
+    def close(self):
+        """Close the current file"""
+        if self.current_file:
+            try:
+                self.current_file.flush()
+                self.current_file.close()
+            except Exception:
+                pass
+            self.current_file = None
+            self.csv_writer = None
+    
+    def get_current_filename(self) -> str:
+        """Get the current log filename"""
+        if self.current_path:
+            return os.path.basename(self.current_path)
+        return ""
 
 
 class SerialReaderThread(QThread):
@@ -439,6 +530,11 @@ class USBDataInterface(ScrollArea):
         self.current_buffer = [[] for _ in range(self.num_sensors)]  # Buffer for averaging
         self.average_window = 100  # Number of samples to average
         
+        # CSV Logging
+        self.csv_logger = None
+        self.csv_logging_enabled = False
+        self.log_dir = DEFAULT_LOG_DIR
+        
         # Sensor colors (9 electrodes + 1 voltage) - Tailwind CSS Colors (600 shades)
         self.colors = [
             (220, 38, 38),    # red-600
@@ -583,6 +679,23 @@ class USBDataInterface(ScrollArea):
         status_layout.addWidget(self.status_label)
         
         conn_layout.addWidget(status_container)
+        
+        conn_layout.addSpacing(12)
+        
+        # CSV Logging Toggle
+        self.log_switch = SwitchButton()
+        self.log_switch.setToolTip("Enable/Disable CSV logging")
+        self.log_switch.checkedChanged.connect(self._on_log_toggle)
+        conn_layout.addWidget(self.log_switch)
+        
+        self.log_status = CaptionLabel("Log: Off")
+        self.log_status.setStyleSheet("color: #9ca3af; font-weight: 500;")
+        conn_layout.addWidget(self.log_status)
+        
+        self.log_folder_btn = TransparentToolButton(FIF.FOLDER)
+        self.log_folder_btn.setToolTip("Select log folder")
+        self.log_folder_btn.clicked.connect(self._select_log_folder)
+        conn_layout.addWidget(self.log_folder_btn)
         
         conn_layout.addSpacing(12)
         
@@ -1116,6 +1229,57 @@ class USBDataInterface(ScrollArea):
         # Clear buffer when switching modes
         self.current_buffer = [[] for _ in range(self.num_sensors)]
     
+    def _on_log_toggle(self, checked):
+        """Handle CSV logging toggle"""
+        self.csv_logging_enabled = checked
+        if checked:
+            # Create logger if it doesn't exist
+            if self.csv_logger is None:
+                self.csv_logger = RotatingCSVLogger(self.log_dir)
+            self.log_status.setText("Log: On")
+            self.log_status.setStyleSheet("color: #16a34a; font-weight: 600;")
+            InfoBar.success(
+                title="Logging Enabled",
+                content=f"Saving to: {self.log_dir}",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=3000
+            )
+        else:
+            # Flush and close the logger
+            if self.csv_logger:
+                self.csv_logger.close()
+            self.log_status.setText("Log: Off")
+            self.log_status.setStyleSheet("color: #9ca3af; font-weight: 500;")
+            InfoBar.info(
+                title="Logging Disabled",
+                content="CSV logging stopped",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=2000
+            )
+    
+    def _select_log_folder(self):
+        """Select folder for CSV logs"""
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select Log Folder",
+            self.log_dir
+        )
+        if folder:
+            self.log_dir = folder
+            # If logging is active, update the logger
+            if self.csv_logger:
+                self.csv_logger.close()
+                self.csv_logger = RotatingCSVLogger(self.log_dir)
+            InfoBar.info(
+                title="Log Folder Changed",
+                content=f"Logs will be saved to: {folder}",
+                parent=self,
+                position=InfoBarPosition.TOP,
+                duration=3000
+            )
+    
     def _update_mode_visibility(self):
         """Update visibility of socket input fields"""
         is_socket = self.connection_mode == "socket"
@@ -1237,10 +1401,15 @@ class USBDataInterface(ScrollArea):
         currents = data.get('currents', [0.0] * 9)
         voltage = data.get('voltage', 0.0)
         pico_time = data.get('pico_time', 0)
+        timestamp = data.get('timestamp', '')
+        
+        # Log to CSV if enabled
+        if self.csv_logging_enabled and self.csv_logger:
+            self.csv_logger.write_row(timestamp, pico_time, currents, voltage)
         
         # Update log
         avg_i = sum(currents) / len(currents) if currents else 0
-        log_msg = f"[{data['timestamp']}] Sum: {sum(currents)*1000:.2f}mA | Avg: {avg_i*1000:.2f}mA | V: {voltage:.3f}V"
+        log_msg = f"[{timestamp}] Sum: {sum(currents)*1000:.2f}mA | Avg: {avg_i*1000:.2f}mA | V: {voltage:.3f}V"
         self.log_text.append(log_msg)
         if self.log_text.document().blockCount() > 200:
             cursor = self.log_text.textCursor()
