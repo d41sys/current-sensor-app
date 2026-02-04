@@ -226,7 +226,9 @@ class SensorCard(QFrame):
         self.index = index
         self.color = color
         self.is_active = True
-        self.setFixedSize(92, 76)
+        self.setMinimumSize(70, 76)  # Allow shrinking but set minimum
+        self.setMaximumHeight(76)  # Keep consistent height
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)  # Allow horizontal expansion
         self.setCursor(Qt.PointingHandCursor)
         
         layout = QVBoxLayout(self)
@@ -855,8 +857,16 @@ class USBDataInterface(ScrollArea):
         
         chart_main.addWidget(right_panel)
         
+        # Set stretch factors so right panel can expand (left=1, right=1 means equal priority)
+        chart_main.setStretchFactor(0, 1)  # left panel
+        chart_main.setStretchFactor(1, 1)  # right panel
+        
+        # Set minimum widths to allow proper resizing on all platforms
+        left_panel.setMinimumWidth(900)
+        right_panel.setMinimumWidth(400)
+        
         # Set initial splitter sizes (3:1 ratio)
-        chart_main.setSizes([900, 450])
+        chart_main.setSizes([600, 300])
         
         chart_view_layout.addWidget(chart_main)
         
