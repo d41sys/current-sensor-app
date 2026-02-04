@@ -84,9 +84,9 @@ class RotatingCSVLogger:
             self._open_new_file(now)
         
         # Convert currents from A to mA (multiply by 1000)
-        currents_ma = [f"{c * 1000:.3f}" for c in currents[:9]]
+        currents_ma = [c*1000 for c in currents[:9]]
         # Voltage is already in mV from the raw data
-        row = [timestamp] + currents_ma + [f"{voltage:.3f}"]
+        row = [timestamp] + currents_ma + [voltage]
         self.csv_writer.writerow(row)
         self.row_count += 1
         
