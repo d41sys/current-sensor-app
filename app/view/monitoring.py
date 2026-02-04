@@ -866,7 +866,7 @@ class USBDataInterface(ScrollArea):
         right_panel.setMinimumWidth(400)
         
         # Set initial splitter sizes (3:1 ratio)
-        chart_main.setSizes([600, 300])
+        # chart_main.setSizes([600, 300])
         
         chart_view_layout.addWidget(chart_main)
         
