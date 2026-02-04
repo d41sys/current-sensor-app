@@ -727,7 +727,7 @@ class USBDataInterface(ScrollArea):
         # PyQtGraph
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setBackground('#fafbfa')
-        self.plot_widget.setLabel('left', 'Current (A)/Voltage (V)', color='#4b5563')
+        self.plot_widget.setLabel('left', 'Current (A) / Voltage (mV)', color='#4b5563')
         self.plot_widget.setLabel('bottom', 'Time (s)', color='#4b5563')
         self.plot_widget.showGrid(x=True, y=True, alpha=0.12)
         self.plot_widget.setMinimumHeight(300)
