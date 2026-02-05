@@ -1,0 +1,24 @@
+[Unit]
+Description=Pico Current Monitor Data Relay Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/eth_sender
+ExecStart=/usr/bin/python3 /home/pi/eth_sender/eth_sender.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables (customize as needed)
+Environment="PICO_SERIAL_PORT=/dev/serial0"
+Environment="PICO_BAUDRATE=921600"
+Environment="FORWARD_PORT=5000"
+Environment="ENABLE_LOG=true"
+Environment="LOG_DIR=/home/pi/eth_sender/logs"
+Environment="ROTATE_SECONDS=1800"
+
+[Install]
+WantedBy=multi-user.target
