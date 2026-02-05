@@ -17,6 +17,10 @@ import platform
 import argparse
 from pathlib import Path
 
+# Fix Windows console encoding for Unicode
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 # Application metadata
 APP_NAME = "CurrentMonitor"
 APP_VERSION = "1.0.0"
@@ -28,6 +32,11 @@ BUILD_DIR = ROOT_DIR / "build"
 DIST_DIR = ROOT_DIR / "dist"
 VENV_DIR = ROOT_DIR / "venv_build"
 
+# Use ASCII-safe symbols for cross-platform compatibility
+SUCCESS_MARK = "[OK]" if sys.platform == 'win32' else "✅"
+ERROR_MARK = "[ERROR]" if sys.platform == 'win32' else "❌"
+INFO_MARK = "[INFO]" if sys.platform == 'win32' else "ℹ️ "
+
 
 def print_header(text: str):
     """Print a formatted header"""
@@ -38,17 +47,17 @@ def print_header(text: str):
 
 def print_success(text: str):
     """Print success message"""
-    print(f"✅ {text}")
+    print(f"{SUCCESS_MARK} {text}")
 
 
 def print_error(text: str):
     """Print error message"""
-    print(f"❌ {text}")
+    print(f"{ERROR_MARK} {text}")
 
 
 def print_info(text: str):
     """Print info message"""
-    print(f"ℹ️  {text}")
+    print(f"{INFO_MARK} {text}")
 
 
 def clean_build():
