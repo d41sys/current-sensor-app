@@ -274,9 +274,64 @@ python flu_main.py
 - Use type hints where applicable
 - Document complex functions with docstrings
 
+## Production Deployment
+
+### Building Executables
+
+#### Using the Build Script (Recommended)
+
+```bash
+# Build for current platform
+python build.py
+
+# Build with debug console (for troubleshooting)
+python build.py --debug
+
+# Build and create release package (ZIP/DMG)
+python build.py --package
+
+# Clean build artifacts
+python build.py --clean
+```
+
+#### Platform-Specific Scripts
+
+**macOS:**
+```bash
+./build_macos.sh
+```
+Output: `dist/CurrentMonitor.app`
+
+**Note for macOS**: After building, you may need to remove the quarantine attribute:
+```bash
+xattr -cr dist/CurrentMonitor.app
+```
+
+**Windows:**
+```batch
+build_windows.bat
+```
+Output: `dist\CurrentMonitor\CurrentMonitor.exe` and `dist\CurrentMonitor-Windows.zip`
+
+### GitHub Actions CI/CD
+
+The project includes a GitHub Actions workflow for automated builds:
+
+1. **Push a tag** to trigger a release build:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+
+2. **Artifacts produced**:
+   - Windows: `CurrentMonitor-Windows.zip`
+   - macOS: `CurrentMonitor-macOS.zip`
+
+3. **Manual trigger**: Go to Actions → Build and Release → Run workflow
+
 ## License
 
-This code is support for Team Assignment course at TU/e with VDL
+This project is developed for the Team Assignment course at TU/e with VDL.
 
 ---
 

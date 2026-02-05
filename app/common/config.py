@@ -1,11 +1,18 @@
 # coding:utf-8
 import sys
+import os
 from enum import Enum
+from pathlib import Path
 
 from PySide6.QtCore import QLocale
 from qfluentwidgets import (qconfig, QConfig, ConfigItem, OptionsConfigItem, BoolValidator,
                             OptionsValidator, RangeConfigItem, RangeValidator,
                             FolderListValidator, Theme, FolderValidator, ConfigSerializer, __version__)
+
+# Create app data directory in user's home
+APP_DATA_DIR = Path.home() / ".current_monitor"
+DOWNLOAD_DIR = APP_DATA_DIR / "download"
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class Language(Enum):
@@ -38,7 +45,7 @@ class Config(QConfig):
     musicFolders = ConfigItem(
         "Folders", "LocalMusic", [], FolderListValidator())
     downloadFolder = ConfigItem(
-        "Folders", "Download", "app/download", FolderValidator())
+        "Folders", "Download", str(DOWNLOAD_DIR), FolderValidator())
 
     # main window
     micaEnabled = ConfigItem("MainWindow", "MicaEnabled", isWin11(), BoolValidator())

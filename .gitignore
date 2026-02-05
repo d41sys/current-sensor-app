@@ -86,3 +86,4 @@ PySide6-FluentUI-QML/
 dataset/
 eth_receiver.py
 charts/
+dist/
