@@ -5,11 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to build (e.g., 1.0.0)'
-        required: true
-        default: '1.0.0'
 
 jobs:
   build-windows:
@@ -30,14 +25,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build application
-        run: python build.py --package
+      - name: Build with PyInstaller
+        run: pyinstaller CurrentMonitor.spec --noconfirm
+
+      - name: Create ZIP archive
+        run: |
+          cd dist
+          Compress-Archive -Path CurrentMonitor -DestinationPath CurrentMonitor-Windows.zip
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: CurrentMonitor-Windows
-          path: dist/CurrentMonitor-*-Windows.zip
+          path: dist/CurrentMonitor-Windows.zip
 
   build-macos:
     runs-on: macos-latest
@@ -57,19 +57,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Install create-dmg
-        run: brew install create-dmg
+      - name: Build with PyInstaller
+        run: pyinstaller CurrentMonitor.spec --noconfirm
 
-      - name: Build application
-        run: python build.py --package
+      - name: Create ZIP archive
+        run: |
+          cd dist
+          zip -r CurrentMonitor-macOS.zip CurrentMonitor.app
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: CurrentMonitor-macOS
-          path: |
-            dist/CurrentMonitor-*-macOS.dmg
-            dist/CurrentMonitor-*-macOS.zip
+          path: dist/CurrentMonitor-macOS.zip
 
   release:
     needs: [build-windows, build-macos]
@@ -89,6 +89,9 @@ jobs:
         with:
           name: CurrentMonitor-macOS
           path: release/
+
+      - name: List release files
+        run: ls -la release/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
