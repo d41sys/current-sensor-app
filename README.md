@@ -268,6 +268,27 @@ python flu_main.py
 # Connect using Socket mode to localhost:5000
 ```
 
+### Running with connection from Electrolyze
+
+For full testing with hardware (Make sure the ethernet cable is connected and configured that adaapter on your PC/Laptop - IPv4 Address to `192.168.50.1`):
+
+```bash
+# Step 1: Connect to the PI 5 using ssh
+ssh engdpi@192.168.50.2 -y
+# then password is 12341234
+
+# Step 2: Go to the right folder
+cd /coding/current-sensor-app/
+
+# Step 3: Run the sender python script
+python3 eth_sender.py
+
+# Step 4: Run application from executable file or python file
+# You can download the executable file from release tag on GitHub
+# If you want to run the python file
+python flu_main.py
+```
+
 ### Code Style
 
 - Follow PEP 8 guidelines
