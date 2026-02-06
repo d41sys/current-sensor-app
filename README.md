@@ -289,6 +289,14 @@ python3 eth_sender.py
 python flu_main.py
 ```
 
+### Copy log files from PI 5 to PC/Laptop
+
+```bash
+# Step 1: Copy pico_logs folder to this current path
+scp -r engdpi@192.168.50.2:~/pico_logs .
+# then password is 12341234
+```
+
 ### Code Style
 
 - Follow PEP 8 guidelines
